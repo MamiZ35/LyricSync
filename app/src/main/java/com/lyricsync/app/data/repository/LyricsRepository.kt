@@ -56,6 +56,7 @@ class LyricsRepository(context: Context) {
                 }.getOrDefault(emptyList())
 
                 if (cachedLines.isNotEmpty()) {
+                    safeCatching { dao.touch(cacheKey) }
                     publishIfCurrentTrack(
                         trackId,
                         LyricsState(
@@ -89,6 +90,13 @@ class LyricsRepository(context: Context) {
         currentCoroutineContext().ensureActive()
 
         if (response == null) {
+            if (!forceRefresh) {
+                val crossEngineCached = tryLoadCrossEngineCache(track, targetLang)
+                if (crossEngineCached != null) {
+                    publishIfCurrentTrack(trackId, crossEngineCached)
+                    return@withContext
+                }
+            }
             publishIfCurrentTrack(
                 trackId,
                 LyricsState(
@@ -168,6 +176,13 @@ class LyricsRepository(context: Context) {
                     )
                 )
                 return@withContext
+            }
+            if (!forceRefresh) {
+                val crossEngineCached = tryLoadCrossEngineCache(track, targetLang)
+                if (crossEngineCached != null) {
+                    publishIfCurrentTrack(trackId, crossEngineCached)
+                    return@withContext
+                }
             }
             // Fall through to offline ML Kit if cloud is unreachable
             publishIfCurrentTrack(
@@ -394,6 +409,35 @@ class LyricsRepository(context: Context) {
         }.getOrNull()
     }
 
+    private suspend fun tryLoadCrossEngineCache(
+        track: MediaTrackState,
+        targetLang: String
+    ): LyricsState? {
+        val cached = safeCatching {
+            dao.getLatestByTrackAndLang(
+                artistName = track.artistName.trim(),
+                trackName = track.trackName.trim(),
+                targetLang = targetLang
+            )
+        }.getOrNull() ?: return null
+
+        val cachedLines: List<LyricLine> = safeCatching {
+            gson.fromJson<List<LyricLine>>(cached.linesJson, lineListType)
+        }.getOrDefault(emptyList())
+        if (cachedLines.isEmpty()) return null
+
+        safeCatching { dao.touch(cached.cacheKey) }
+        return LyricsState(
+            trackId = track.trackId,
+            lines = cachedLines,
+            isSynced = cached.isSynced,
+            sourceLang = cached.sourceLang,
+            targetLang = cached.targetLang,
+            isLoading = false,
+            isFromCache = true
+        )
+    }
+
     private suspend fun saveToCache(
         cacheKey: String,
         track: MediaTrackState,
@@ -406,14 +450,15 @@ class LyricsRepository(context: Context) {
             dao.insert(
                 CachedLyricsEntity(
                     cacheKey = cacheKey,
-                    artistName = track.artistName,
-                    trackName = track.trackName,
+                    artistName = track.artistName.trim(),
+                    trackName = track.trackName.trim(),
                     sourceLang = sourceLang,
                     targetLang = targetLang,
                     isSynced = isSynced,
                     linesJson = gson.toJson(lines)
                 )
             )
+            dao.pruneLeastRecentlyUsed(maxEntries = 500)
         }
     }
 
