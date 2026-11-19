@@ -137,6 +137,7 @@ class MediaNotificationListenerService : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        positionTickerJob?.cancel()
         cleanupController()
         runCatching {
             mediaSessionManager?.removeOnActiveSessionsChangedListener(sessionsChangedListener)
@@ -148,6 +149,7 @@ class MediaNotificationListenerService : NotificationListenerService() {
         MediaStateBus.onSeekToMs = null
         MediaStateBus.onSkipNext = null
         MediaStateBus.onSkipPrevious = null
+        positionTickerJob?.cancel()
         cleanupController()
         runCatching {
             mediaSessionManager?.removeOnActiveSessionsChangedListener(sessionsChangedListener)
@@ -184,6 +186,9 @@ class MediaNotificationListenerService : NotificationListenerService() {
             activeController?.unregisterCallback(controllerCallback)
             activeController = chosen
             chosen.registerCallback(controllerCallback)
+        }
+        if (positionTickerJob?.isActive != true) {
+            startPositionTicker()
         }
         syncCurrentControllerState()
     }
@@ -249,7 +254,7 @@ class MediaNotificationListenerService : NotificationListenerService() {
             while (isActive) {
                 val controller = activeController
                 val state = controller?.playbackState
-                if (controller != null && state != null && !MediaStateBus.trackState.value.isManualOverride) {
+                if (controller != null && state != null) {
                     val isPlaying = state.state == PlaybackState.STATE_PLAYING
                     val duration = MediaStateBus.trackState.value.durationMs
                     val pos = computeCurrentPosition(state, duration)
@@ -291,7 +296,6 @@ class MediaNotificationListenerService : NotificationListenerService() {
     }
 
     private fun cleanupController() {
-        positionTickerJob?.cancel()
         activeController?.unregisterCallback(controllerCallback)
         activeController = null
         lastSyncedControllerTrackId = ""

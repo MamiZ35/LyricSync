@@ -88,10 +88,13 @@ object MediaStateBus {
 
     fun updatePosition(positionMs: Long, isPlaying: Boolean) {
         // Always update active line at 100ms precision while throttling full trackState UI emissions
+        val previousIndex = _activeLineIndex.value
         recalculateActiveLine(positionMs)
+        val indexChanged = _activeLineIndex.value != previousIndex
         val current = _trackState.value
         val secondChanged = (positionMs / 1000L) != (current.positionMs / 1000L)
-        if (current.isPlaying != isPlaying ||
+        if (indexChanged ||
+            current.isPlaying != isPlaying ||
             secondChanged ||
             positionMs < current.positionMs ||
             abs(positionMs - current.positionMs) >= 900L

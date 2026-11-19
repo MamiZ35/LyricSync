@@ -1,6 +1,8 @@
 package com.lyricsync.app
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -10,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -28,8 +31,10 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.lyricsync.app.data.remote.UpdateChecker
 import com.lyricsync.app.data.repository.LyricsRepository
 import com.lyricsync.app.data.repository.MediaStateBus
+import com.lyricsync.app.domain.LyricLine
 import com.lyricsync.app.domain.ThemeMode
 import com.lyricsync.app.service.FloatingOverlayService
 import com.lyricsync.app.service.MediaNotificationListenerService
@@ -239,10 +244,55 @@ class MainActivity : ComponentActivity() {
                         },
                         onDeleteModel = { langCode ->
                             repository.deleteModel(langCode)
+                        },
+                        onCopyLine = { line ->
+                            copyLyricLine(line)
+                        },
+                        onShareLine = { line ->
+                            shareLyricLine(line, trackState.trackName, trackState.artistName)
+                        },
+                        onCheckForUpdate = {
+                            UpdateChecker.checkLatestRelease(BuildConfig.VERSION_NAME)
+                        },
+                        onOpenDownloadUrl = { url ->
+                            openDownloadUrl(url)
                         }
                     )
                 }
             }
+        }
+    }
+
+    private fun formatLineForShare(line: LyricLine): String {
+        return if (line.translatedText.isNotBlank() && line.translatedText != line.originalText) {
+            "${line.originalText}\n${line.translatedText}"
+        } else {
+            line.originalText
+        }
+    }
+
+    private fun copyLyricLine(line: LyricLine) {
+        val text = formatLineForShare(line)
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        clipboard?.setPrimaryClip(ClipData.newPlainText("LyricSync", text))
+        Toast.makeText(this, "Panoya kopyalandı", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun shareLyricLine(line: LyricLine, trackName: String, artistName: String) {
+        val header = if (trackName.isNotBlank()) "$trackName - $artistName\n\n" else ""
+        val shareText = "$header${formatLineForShare(line)}"
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, shareText)
+        }
+        runCatching {
+            startActivity(Intent.createChooser(sendIntent, "Sözü Paylaş"))
+        }
+    }
+
+    private fun openDownloadUrl(url: String) {
+        runCatching {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }
     }
 

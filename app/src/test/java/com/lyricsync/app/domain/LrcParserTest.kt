@@ -1,7 +1,9 @@
 package com.lyricsync.app.domain
 
 import com.lyricsync.app.data.remote.CloudTranslator
+import com.lyricsync.app.data.remote.UpdateChecker
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -62,5 +64,13 @@ class LrcParserTest {
         val raw = "I ain't gonna fallin' 'cause I wanna know"
         val normalized = CloudTranslator.normalizeLyricText(raw)
         assertEquals("I am not going to falling because I want to know", normalized)
+    }
+
+    @Test
+    fun `isNewerVersion compares semantic version segments accurately`() {
+        assertTrue(UpdateChecker.isNewerVersion("v1.2.10", "1.2.9"))
+        assertTrue(UpdateChecker.isNewerVersion("v1.3.0", "1.2.99"))
+        assertFalse(UpdateChecker.isNewerVersion("v1.2.5", "1.2.5"))
+        assertFalse(UpdateChecker.isNewerVersion("v1.2.4", "1.2.5"))
     }
 }

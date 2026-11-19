@@ -6,6 +6,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-debug-apk:
     runs-on: ubuntu-latest
@@ -29,9 +32,21 @@ jobs:
       - name: Run Unit Tests & Build Debug APK
         run: ./gradlew testDebugUnitTest assembleDebug --stacktrace
 
+      - name: Prepare Release APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk LyricSync.apk
+
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: LyricSync-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: LyricSync.apk
           if-no-files-found: error
+
+      - name: Publish GitHub Release APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.2.${{ github.run_number }}
+          name: LyricSync v1.2.${{ github.run_number }}
+          body: "Otomatik derlenen güncel LyricSync Android APK sürümü (v1.2.${{ github.run_number }})."
+          files: LyricSync.apk
+          make_latest: true

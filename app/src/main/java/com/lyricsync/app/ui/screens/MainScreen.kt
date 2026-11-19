@@ -1,12 +1,17 @@
 package com.lyricsync.app.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,6 +38,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LightMode
@@ -44,8 +50,10 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SettingsBrightness
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
@@ -89,7 +97,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.mlkit.nl.translate.TranslateLanguage
+import com.lyricsync.app.BuildConfig
 import com.lyricsync.app.data.remote.LrcLibResponse
+import com.lyricsync.app.data.remote.ReleaseInfo
+import com.lyricsync.app.data.remote.UpdateChecker
 import com.lyricsync.app.domain.LyricDisplayMode
 import com.lyricsync.app.domain.LyricLine
 import com.lyricsync.app.domain.LyricsState
@@ -97,6 +108,7 @@ import com.lyricsync.app.domain.MediaTrackState
 import com.lyricsync.app.domain.OverlayConfig
 import com.lyricsync.app.domain.ThemeMode
 import com.lyricsync.app.domain.TranslationEngine
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -142,26 +154,55 @@ fun MainScreen(
     onSetWifiOnlyDownload: (Boolean) -> Unit,
     onLoadCacheAndModels: suspend () -> Pair<Int, List<String>>,
     onClearCache: suspend () -> Unit,
-    onDeleteModel: suspend (String) -> Unit
+    onDeleteModel: suspend (String) -> Unit,
+    onCopyLine: (LyricLine) -> Unit,
+    onShareLine: (LyricLine) -> Unit,
+    onCheckForUpdate: suspend () -> ReleaseInfo?,
+    onOpenDownloadUrl: (String) -> Unit
 ) {
     val listState = rememberLazyListState()
     var showSearchDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var isAutoScrollPaused by remember { mutableStateOf(false) }
+    var isProgrammaticScroll by remember { mutableStateOf(false) }
+    var selectedLineForActions by remember { mutableStateOf<LyricLine?>(null) }
 
-    // Automatically center the active lyric line in the LazyColumn viewport (unless user is dragging)
-    LaunchedEffect(activeLineIndex, lyricsState.trackId) {
-        if (lyricsState.isSynced &&
-            activeLineIndex in lyricsState.lines.indices &&
-            !listState.isScrollInProgress
+    LaunchedEffect(lyricsState.trackId) {
+        isAutoScrollPaused = false
+    }
+
+    // Pause auto-scroll when user manually drags/flings the list
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress && !isProgrammaticScroll) {
+            isAutoScrollPaused = true
+        }
+    }
+
+    // Resume auto-scroll 4.5 seconds after user finishes scrolling
+    LaunchedEffect(isAutoScrollPaused, listState.isScrollInProgress) {
+        if (isAutoScrollPaused && !listState.isScrollInProgress) {
+            delay(4500L)
+            isAutoScrollPaused = false
+        }
+    }
+
+    // Automatically center the active lyric line on track load, lyric ready, or line change
+    LaunchedEffect(activeLineIndex, lyricsState.trackId, lyricsState.lines.size, isAutoScrollPaused) {
+        if (!isAutoScrollPaused &&
+            lyricsState.isSynced &&
+            activeLineIndex in lyricsState.lines.indices
         ) {
             val viewportHeight = listState.layoutInfo.viewportEndOffset -
                 listState.layoutInfo.viewportStartOffset
             val centerOffset = if (viewportHeight > 0) -(viewportHeight / 3) else -220
-            runCatching {
+            isProgrammaticScroll = true
+            try {
                 listState.animateScrollToItem(
                     index = activeLineIndex,
                     scrollOffset = centerOffset
                 )
+            } finally {
+                isProgrammaticScroll = false
             }
         }
     }
@@ -314,7 +355,38 @@ fun MainScreen(
                                     isPast = isPast,
                                     isSynced = lyricsState.isSynced,
                                     canSeek = canSeek,
-                                    onSeek = { onSeekToMs(line.timeMs) }
+                                    onSeek = { onSeekToMs(line.timeMs) },
+                                    onLongPress = {
+                                        onCopyLine(line)
+                                        selectedLineForActions = line
+                                    }
+                                )
+                            }
+                        }
+
+                        // Floating "Jump back to active line" button while manual scrolling pauses auto-follow
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = isAutoScrollPaused &&
+                                lyricsState.isSynced &&
+                                activeLineIndex in lyricsState.lines.indices,
+                            enter = fadeIn(),
+                            exit = fadeOut(),
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 14.dp)
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(24.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                shadowElevation = 6.dp,
+                                modifier = Modifier.clickable { isAutoScrollPaused = false }
+                            ) {
+                                Text(
+                                    text = "🎯 Aktif Satıra Dön",
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
                                 )
                             }
                         }
@@ -322,6 +394,54 @@ fun MainScreen(
                 }
             }
         }
+    }
+
+    selectedLineForActions?.let { line ->
+        AlertDialog(
+            onDismissRequest = { selectedLineForActions = null },
+            title = { Text("Söz İşlemleri", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = line.originalText,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp
+                    )
+                    if (line.translatedText.isNotBlank() && line.translatedText != line.originalText) {
+                        Text(
+                            text = line.translatedText,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 14.sp
+                        )
+                    }
+                    Text(
+                        text = "Panoya kopyalandı ✓",
+                        fontSize = 12.sp,
+                        color = Color(0xFF10B981)
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    onCopyLine(line)
+                    selectedLineForActions = null
+                }) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Kopyala")
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    onShareLine(line)
+                    selectedLineForActions = null
+                }) {
+                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Paylaş")
+                }
+            }
+        )
     }
 
     if (showSearchDialog) {
@@ -347,6 +467,8 @@ fun MainScreen(
             onLoadCacheAndModels = onLoadCacheAndModels,
             onClearCache = onClearCache,
             onDeleteModel = onDeleteModel,
+            onCheckForUpdate = onCheckForUpdate,
+            onOpenDownloadUrl = onOpenDownloadUrl,
             onDismiss = { showSettingsDialog = false }
         )
     }
@@ -816,6 +938,7 @@ private fun StatusBanner(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LyricLineRow(
     line: LyricLine,
@@ -824,7 +947,8 @@ private fun LyricLineRow(
     isPast: Boolean,
     isSynced: Boolean,
     canSeek: Boolean,
-    onSeek: () -> Unit
+    onSeek: () -> Unit,
+    onLongPress: () -> Unit
 ) {
     val scale by animateFloatAsState(
         targetValue = if (isActive) 1.03f else 1.0f,
@@ -885,7 +1009,10 @@ private fun LyricLineRow(
                     Modifier
                 }
             )
-            .clickable(enabled = canSeek) { onSeek() }
+            .combinedClickable(
+                onClick = { if (canSeek) onSeek() },
+                onLongClick = { onLongPress() }
+            )
             .padding(horizontal = 18.dp, vertical = 14.dp)
     ) {
         if (showOriginal) {
@@ -1063,11 +1190,16 @@ private fun SettingsAndModelsDialog(
     onLoadCacheAndModels: suspend () -> Pair<Int, List<String>>,
     onClearCache: suspend () -> Unit,
     onDeleteModel: suspend (String) -> Unit,
+    onCheckForUpdate: suspend () -> ReleaseInfo?,
+    onOpenDownloadUrl: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var cachedCount by remember { mutableStateOf(0) }
     var downloadedModels by remember { mutableStateOf<List<String>>(emptyList()) }
     var isRefreshing by remember { mutableStateOf(true) }
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+    var updateStatus by remember { mutableStateOf<String?>(null) }
+    var releaseInfo by remember { mutableStateOf<ReleaseInfo?>(null) }
     val scope = rememberCoroutineScope()
 
     fun refreshStats() {
@@ -1296,6 +1428,72 @@ private fun SettingsAndModelsDialog(
                                 }
                             }
                         }
+                    }
+                }
+
+                HorizontalDivider()
+
+                Text(
+                    text = "Uygulama Güncellemesi",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Text(
+                    text = "Mevcut Sürüm: v${BuildConfig.VERSION_NAME}",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                if (updateStatus != null) {
+                    Text(
+                        text = updateStatus!!,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (releaseInfo?.isUpdateAvailable == true) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                isCheckingUpdate = true
+                                updateStatus = "GitHub kontrol ediliyor..."
+                                val info = onCheckForUpdate()
+                                releaseInfo = info
+                                updateStatus = when {
+                                    info == null -> "Güncelleme bilgisi alınamadı."
+                                    info.isUpdateAvailable -> "Yeni sürüm bulundu: ${info.latestTag}"
+                                    else -> "Güncel sürümü (${info.latestTag}) kullanıyorsunuz ✓"
+                                }
+                                isCheckingUpdate = false
+                            }
+                        },
+                        enabled = !isCheckingUpdate,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(
+                            text = if (isCheckingUpdate) "Kontrol..." else "Kontrol Et",
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    Button(
+                        onClick = {
+                            onOpenDownloadUrl(releaseInfo?.downloadUrl ?: UpdateChecker.LATEST_APK_URL)
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Son APK İndir", fontSize = 12.sp)
                     }
                 }
             }
