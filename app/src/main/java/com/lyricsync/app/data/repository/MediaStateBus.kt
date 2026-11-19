@@ -46,6 +46,9 @@ object MediaStateBus {
     private val _wifiOnlyDownload = MutableStateFlow(false)
     val wifiOnlyDownload: StateFlow<Boolean> = _wifiOnlyDownload.asStateFlow()
 
+    private val _keepScreenOn = MutableStateFlow(false)
+    val keepScreenOn: StateFlow<Boolean> = _keepScreenOn.asStateFlow()
+
     private val _overlayConfig = MutableStateFlow(OverlayConfig())
     val overlayConfig: StateFlow<OverlayConfig> = _overlayConfig.asStateFlow()
 
@@ -76,6 +79,7 @@ object MediaStateBus {
             _displayMode.value = appPrefs.displayMode
             _translationEngine.value = appPrefs.translationEngine
             _wifiOnlyDownload.value = appPrefs.wifiOnlyDownload
+            _keepScreenOn.value = appPrefs.keepScreenOn
             _overlayConfig.value = appPrefs.getOverlayConfig()
             _lyricsState.value = _lyricsState.value.copy(targetLang = savedLang)
         }
@@ -139,6 +143,11 @@ object MediaStateBus {
     fun setWifiOnlyDownload(wifiOnly: Boolean) {
         _wifiOnlyDownload.value = wifiOnly
         prefs?.wifiOnlyDownload = wifiOnly
+    }
+
+    fun setKeepScreenOn(enabled: Boolean) {
+        _keepScreenOn.value = enabled
+        prefs?.keepScreenOn = enabled
     }
 
     fun updateOverlayConfig(config: OverlayConfig) {

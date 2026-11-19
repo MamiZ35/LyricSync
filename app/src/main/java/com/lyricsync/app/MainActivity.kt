@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -28,6 +29,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -41,12 +43,15 @@ import com.lyricsync.app.service.MediaNotificationListenerService
 import com.lyricsync.app.ui.screens.MainScreen
 import com.lyricsync.app.ui.screens.PermissionOnboardingScreen
 import com.lyricsync.app.ui.theme.LyricSyncTheme
+import com.lyricsync.app.ui.util.LyricCardGenerator
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.io.File
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var repository: LyricsRepository
+    private var pendingInstallApkFile: File? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -102,6 +107,14 @@ class MainActivity : ComponentActivity() {
                         if (notifGranted && overlayGranted) {
                             onboardingCompleted = true
                         }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                            packageManager.canRequestPackageInstalls()
+                        ) {
+                            pendingInstallApkFile?.let { file ->
+                                pendingInstallApkFile = null
+                                installDownloadedApk(file)
+                            }
+                        }
                     }
                 }
                 lifecycleOwner.lifecycle.addObserver(observer)
@@ -117,8 +130,17 @@ class MainActivity : ComponentActivity() {
             val translationEngine by MediaStateBus.translationEngine.collectAsState()
             val overlayConfig by MediaStateBus.overlayConfig.collectAsState()
             val wifiOnlyDownload by MediaStateBus.wifiOnlyDownload.collectAsState()
+            val keepScreenOn by MediaStateBus.keepScreenOn.collectAsState()
             val coroutineScope = rememberCoroutineScope()
             var activeTranslationJob by remember { mutableStateOf<Job?>(null) }
+
+            LaunchedEffect(keepScreenOn) {
+                if (keepScreenOn) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+            }
 
             LyricSyncTheme(themeMode = themeMode) {
                 if (!onboardingCompleted) {
@@ -150,6 +172,7 @@ class MainActivity : ComponentActivity() {
                         translationEngine = translationEngine,
                         overlayConfig = overlayConfig,
                         wifiOnlyDownload = wifiOnlyDownload,
+                        keepScreenOn = keepScreenOn,
                         onOpenPermissions = {
                             onboardingCompleted = false
                         },
@@ -160,6 +183,9 @@ class MainActivity : ComponentActivity() {
                                 ThemeMode.SYSTEM -> ThemeMode.DARK
                             }
                             MediaStateBus.setThemeMode(nextTheme)
+                        },
+                        onToggleKeepScreenOn = {
+                            MediaStateBus.setKeepScreenOn(!keepScreenOn)
                         },
                         onSelectTargetLanguage = { langCode ->
                             MediaStateBus.setTargetLanguage(langCode)
@@ -251,8 +277,32 @@ class MainActivity : ComponentActivity() {
                         onShareLine = { line ->
                             shareLyricLine(line, trackState.trackName, trackState.artistName)
                         },
+                        onShareImageCard = { line ->
+                            coroutineScope.launch {
+                                LyricCardGenerator.generateAndShareCard(
+                                    context = this@MainActivity,
+                                    track = trackState,
+                                    line = line
+                                )
+                            }
+                        },
                         onCheckForUpdate = {
                             UpdateChecker.checkLatestRelease(BuildConfig.VERSION_NAME)
+                        },
+                        onDownloadAndInstallApk = { url, onProgress, onComplete ->
+                            coroutineScope.launch {
+                                val file = UpdateChecker.downloadApk(
+                                    context = this@MainActivity,
+                                    downloadUrl = url,
+                                    onProgress = onProgress
+                                )
+                                if (file != null && file.exists()) {
+                                    onComplete(true)
+                                    installDownloadedApk(file)
+                                } else {
+                                    onComplete(false)
+                                }
+                            }
                         },
                         onOpenDownloadUrl = { url ->
                             openDownloadUrl(url)
@@ -293,6 +343,43 @@ class MainActivity : ComponentActivity() {
     private fun openDownloadUrl(url: String) {
         runCatching {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        }
+    }
+
+    private fun installDownloadedApk(apkFile: File) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !packageManager.canRequestPackageInstalls()
+        ) {
+            pendingInstallApkFile = apkFile
+            Toast.makeText(
+                this,
+                "Güncellemeyi kurmak için 'Bu kaynaktan izin ver' seçeneğini açın",
+                Toast.LENGTH_LONG
+            ).show()
+            runCatching {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:$packageName")
+                    )
+                )
+            }
+            return
+        }
+
+        runCatching {
+            val uri = FileProvider.getUriForFile(
+                this,
+                "$packageName.fileprovider",
+                apkFile
+            )
+            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(installIntent)
+        }.onFailure {
+            Toast.makeText(this, "Kurulum başlatılamadı: ${it.localizedMessage}", Toast.LENGTH_LONG).show()
         }
     }
 

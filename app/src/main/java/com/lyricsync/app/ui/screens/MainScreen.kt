@@ -37,10 +37,14 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BrightnessHigh
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.NotificationsOff
@@ -81,6 +85,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -137,8 +142,10 @@ fun MainScreen(
     translationEngine: TranslationEngine,
     overlayConfig: OverlayConfig,
     wifiOnlyDownload: Boolean,
+    keepScreenOn: Boolean,
     onOpenPermissions: () -> Unit,
     onToggleTheme: () -> Unit,
+    onToggleKeepScreenOn: () -> Unit,
     onSelectTargetLanguage: (String) -> Unit,
     onSelectDisplayMode: (LyricDisplayMode) -> Unit,
     onSelectTranslationEngine: (TranslationEngine) -> Unit,
@@ -157,12 +164,15 @@ fun MainScreen(
     onDeleteModel: suspend (String) -> Unit,
     onCopyLine: (LyricLine) -> Unit,
     onShareLine: (LyricLine) -> Unit,
+    onShareImageCard: (LyricLine) -> Unit,
     onCheckForUpdate: suspend () -> ReleaseInfo?,
+    onDownloadAndInstallApk: (String, (Int) -> Unit, (Boolean) -> Unit) -> Unit,
     onOpenDownloadUrl: (String) -> Unit
 ) {
     val listState = rememberLazyListState()
     var showSearchDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var isAmbientFullscreen by rememberSaveable { mutableStateOf(false) }
     var isAutoScrollPaused by remember { mutableStateOf(false) }
     var isProgrammaticScroll by remember { mutableStateOf(false) }
     var selectedLineForActions by remember { mutableStateOf<LyricLine?>(null) }
@@ -207,6 +217,21 @@ fun MainScreen(
         }
     }
 
+    val ambientAccent = trackState.accentColorArgb?.let { Color(it) } ?: MaterialTheme.colorScheme.primary
+    val containerBgModifier = if (isAmbientFullscreen) {
+        Modifier.background(
+            Brush.verticalGradient(
+                listOf(
+                    ambientAccent.copy(alpha = 0.28f),
+                    MaterialTheme.colorScheme.background,
+                    ambientAccent.copy(alpha = 0.16f)
+                )
+            )
+        )
+    } else {
+        Modifier
+    }
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
@@ -214,63 +239,130 @@ fun MainScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .then(containerBgModifier)
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            // Top Control Bar + Quick Action Chips
-            TopHeaderBar(
-                targetLang = lyricsState.targetLang,
-                displayMode = displayMode,
-                isOverlayActive = isOverlayActive,
-                themeMode = themeMode,
-                onToggleTheme = onToggleTheme,
-                onSelectTargetLanguage = onSelectTargetLanguage,
-                onSelectDisplayMode = onSelectDisplayMode,
-                onToggleOverlay = onToggleOverlay,
-                onOpenSearch = { showSearchDialog = true },
-                onOpenSettings = { showSettingsDialog = true },
-                onRetryLyrics = onRetryLyrics
-            )
-
-            // Notification Access Warning Banner (when user entered via Manual Search mode)
-            if (!hasNotificationAccess) {
-                Spacer(modifier = Modifier.height(8.dp))
+            if (isAmbientFullscreen) {
+                // Minimal fullscreen ambient header
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFFF59E0B).copy(alpha = 0.14f))
-                        .border(1.dp, Color(0xFFF59E0B).copy(alpha = 0.45f), RoundedCornerShape(12.dp))
-                        .clickable { onOpenPermissions() }
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.NotificationsOff,
-                        contentDescription = null,
-                        tint = Color(0xFFF59E0B),
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Otomatik Spotify takibi kapalı (Manuel mod). İzin vermek için dokunun.",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (trackState.hasActiveTrack) trackState.trackName else "Ambiyans Modu",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (trackState.artistName.isNotBlank()) {
+                            Text(
+                                text = trackState.artistName,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        IconButton(onClick = onToggleKeepScreenOn) {
+                            Icon(
+                                imageVector = Icons.Default.BrightnessHigh,
+                                contentDescription = "Ekranı Açık Tut",
+                                tint = if (keepScreenOn) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f))
+                                .clickable { isAmbientFullscreen = false }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FullscreenExit,
+                                contentDescription = "Ambiyanstan Çık",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Çık",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
                 }
+            } else {
+                // Top Control Bar + Quick Action Chips
+                TopHeaderBar(
+                    targetLang = lyricsState.targetLang,
+                    displayMode = displayMode,
+                    isOverlayActive = isOverlayActive,
+                    keepScreenOn = keepScreenOn,
+                    themeMode = themeMode,
+                    onToggleTheme = onToggleTheme,
+                    onToggleKeepScreenOn = onToggleKeepScreenOn,
+                    onEnterAmbient = { isAmbientFullscreen = true },
+                    onSelectTargetLanguage = onSelectTargetLanguage,
+                    onSelectDisplayMode = onSelectDisplayMode,
+                    onToggleOverlay = onToggleOverlay,
+                    onOpenSearch = { showSearchDialog = true },
+                    onOpenSettings = { showSettingsDialog = true },
+                    onRetryLyrics = onRetryLyrics
+                )
+
+                // Notification Access Warning Banner (when user entered via Manual Search mode)
+                if (!hasNotificationAccess) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFFF59E0B).copy(alpha = 0.14f))
+                            .border(1.dp, Color(0xFFF59E0B).copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+                            .clickable { onOpenPermissions() }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.NotificationsOff,
+                            contentDescription = null,
+                            tint = Color(0xFFF59E0B),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Otomatik Spotify takibi kapalı (Manuel mod). İzin vermek için dokunun.",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Now Playing Track Card with Album Art & Transport Controls
+                NowPlayingCard(
+                    trackState = trackState,
+                    lyricsState = lyricsState,
+                    onPlayPauseToggle = onPlayPauseToggle,
+                    onSkipPrevious = onSkipPrevious,
+                    onSkipNext = onSkipNext,
+                    onOpenSearch = { showSearchDialog = true }
+                )
             }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Now Playing Track Card with Album Art & Transport Controls
-            NowPlayingCard(
-                trackState = trackState,
-                lyricsState = lyricsState,
-                onPlayPauseToggle = onPlayPauseToggle,
-                onSkipPrevious = onSkipPrevious,
-                onSkipNext = onSkipNext,
-                onOpenSearch = { showSearchDialog = true }
-            )
 
             // ML Kit Model Download / Status Banner
             if (lyricsState.statusMessage != null) {
@@ -401,7 +493,7 @@ fun MainScreen(
             onDismissRequest = { selectedLineForActions = null },
             title = { Text("Söz İşlemleri", fontWeight = FontWeight.Bold) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
                         text = line.originalText,
                         fontWeight = FontWeight.SemiBold,
@@ -419,26 +511,54 @@ fun MainScreen(
                         fontSize = 12.sp,
                         color = Color(0xFF10B981)
                     )
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    onCopyLine(line)
-                    selectedLineForActions = null
-                }) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Kopyala")
+
+                    Button(
+                        onClick = {
+                            onShareImageCard(line)
+                            selectedLineForActions = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Görsel Kart Paylaş (PNG)")
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                onCopyLine(line)
+                                selectedLineForActions = null
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Kopyala", fontSize = 12.sp)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                onShareLine(line)
+                                selectedLineForActions = null
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Metin Paylaş", fontSize = 12.sp)
+                        }
+                    }
                 }
             },
             confirmButton = {
-                Button(onClick = {
-                    onShareLine(line)
-                    selectedLineForActions = null
-                }) {
-                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Paylaş")
+                TextButton(onClick = { selectedLineForActions = null }) {
+                    Text("Kapat")
                 }
             }
         )
@@ -468,6 +588,7 @@ fun MainScreen(
             onClearCache = onClearCache,
             onDeleteModel = onDeleteModel,
             onCheckForUpdate = onCheckForUpdate,
+            onDownloadAndInstallApk = onDownloadAndInstallApk,
             onOpenDownloadUrl = onOpenDownloadUrl,
             onDismiss = { showSettingsDialog = false }
         )
@@ -479,8 +600,11 @@ private fun TopHeaderBar(
     targetLang: String,
     displayMode: LyricDisplayMode,
     isOverlayActive: Boolean,
+    keepScreenOn: Boolean,
     themeMode: ThemeMode,
     onToggleTheme: () -> Unit,
+    onToggleKeepScreenOn: () -> Unit,
+    onEnterAmbient: () -> Unit,
     onSelectTargetLanguage: (String) -> Unit,
     onSelectDisplayMode: (LyricDisplayMode) -> Unit,
     onToggleOverlay: () -> Unit,
@@ -686,6 +810,58 @@ private fun TopHeaderBar(
                     fontWeight = FontWeight.SemiBold,
                     color = if (isOverlayActive) MaterialTheme.colorScheme.onPrimary
                     else MaterialTheme.colorScheme.onSurface
+                )
+            }
+
+            // Keep Screen On Toggle Chip
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        if (keepScreenOn) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.25f)
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    )
+                    .clickable { onToggleKeepScreenOn() }
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.BrightnessHigh,
+                    contentDescription = "Ekranı Açık Tut",
+                    tint = if (keepScreenOn) MaterialTheme.colorScheme.tertiary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(15.dp)
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                    text = if (keepScreenOn) "Ekran Açık ✓" else "Ekran Açık",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+
+            // Fullscreen Ambient Lyrics Mode Chip
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable { onEnterAmbient() }
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Fullscreen,
+                    contentDescription = "Ambiyans Modu",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(15.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "Ambiyans",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
             }
         }
@@ -1191,6 +1367,7 @@ private fun SettingsAndModelsDialog(
     onClearCache: suspend () -> Unit,
     onDeleteModel: suspend (String) -> Unit,
     onCheckForUpdate: suspend () -> ReleaseInfo?,
+    onDownloadAndInstallApk: (String, (Int) -> Unit, (Boolean) -> Unit) -> Unit,
     onOpenDownloadUrl: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1198,6 +1375,8 @@ private fun SettingsAndModelsDialog(
     var downloadedModels by remember { mutableStateOf<List<String>>(emptyList()) }
     var isRefreshing by remember { mutableStateOf(true) }
     var isCheckingUpdate by remember { mutableStateOf(false) }
+    var isDownloadingApk by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableStateOf(0) }
     var updateStatus by remember { mutableStateOf<String?>(null) }
     var releaseInfo by remember { mutableStateOf<ReleaseInfo?>(null) }
     val scope = rememberCoroutineScope()
@@ -1455,6 +1634,21 @@ private fun SettingsAndModelsDialog(
                     )
                 }
 
+                if (isDownloadingApk) {
+                    LinearProgressIndicator(
+                        progress = { downloadProgress / 100f },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                    )
+                    Text(
+                        text = "APK indiriliyor: %$downloadProgress",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1474,7 +1668,7 @@ private fun SettingsAndModelsDialog(
                                 isCheckingUpdate = false
                             }
                         },
-                        enabled = !isCheckingUpdate,
+                        enabled = !isCheckingUpdate && !isDownloadingApk,
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(10.dp)
                     ) {
@@ -1486,15 +1680,40 @@ private fun SettingsAndModelsDialog(
 
                     Button(
                         onClick = {
-                            onOpenDownloadUrl(releaseInfo?.downloadUrl ?: UpdateChecker.LATEST_APK_URL)
+                            val targetUrl = releaseInfo?.downloadUrl ?: UpdateChecker.LATEST_APK_URL
+                            isDownloadingApk = true
+                            downloadProgress = 0
+                            updateStatus = "Güncelleme paketleri indiriliyor..."
+                            onDownloadAndInstallApk(
+                                targetUrl,
+                                { pct -> downloadProgress = pct },
+                                { success ->
+                                    isDownloadingApk = false
+                                    updateStatus = if (success) {
+                                        "İndirme tamamlandı, yükleyici açılıyor..."
+                                    } else {
+                                        "İndirme başarısız. Tarayıcıdan indirmeyi deneyin."
+                                    }
+                                }
+                            )
                         },
+                        enabled = !isDownloadingApk,
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Son APK İndir", fontSize = 12.sp)
+                        Text(if (isDownloadingApk) "%$downloadProgress" else "İndir & Kur", fontSize = 12.sp)
                     }
+                }
+
+                TextButton(
+                    onClick = {
+                        onOpenDownloadUrl(releaseInfo?.downloadUrl ?: UpdateChecker.LATEST_APK_URL)
+                    },
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("Tarayıcıdan İndir", fontSize = 11.sp)
                 }
             }
         },

@@ -1,11 +1,14 @@
 package com.lyricsync.app.data.remote
 
+import android.content.Context
 import com.google.gson.JsonParser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
 
 data class ReleaseInfo(
@@ -26,6 +29,15 @@ object UpdateChecker {
         OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
+            .build()
+    }
+
+    private val downloadClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
             .build()
     }
 
@@ -70,6 +82,56 @@ object UpdateChecker {
                 null
             }
         }
+
+    suspend fun downloadApk(
+        context: Context,
+        downloadUrl: String,
+        onProgress: (Int) -> Unit
+    ): File? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url(downloadUrl)
+                .header("User-Agent", "LyricSyncTranslator")
+                .build()
+
+            downloadClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val body = response.body ?: return@withContext null
+                val totalBytes = body.contentLength()
+                val updateDir = File(context.cacheDir, "updates").apply { mkdirs() }
+                val outFile = File(updateDir, "LyricSync-update.apk")
+
+                body.byteStream().use { input ->
+                    FileOutputStream(outFile).use { output ->
+                        val buffer = ByteArray(16 * 1024)
+                        var bytesReadTotal = 0L
+                        var lastReportedPct = -1
+
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read == -1) break
+                            output.write(buffer, 0, read)
+                            bytesReadTotal += read
+                            if (totalBytes > 0L) {
+                                val pct = ((bytesReadTotal * 100L) / totalBytes).toInt().coerceIn(0, 100)
+                                if (pct != lastReportedPct) {
+                                    lastReportedPct = pct
+                                    withContext(Dispatchers.Main) { onProgress(pct) }
+                                }
+                            }
+                        }
+                        output.flush()
+                    }
+                }
+                withContext(Dispatchers.Main) { onProgress(100) }
+                outFile
+            }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     internal fun isNewerVersion(latestTag: String, currentVersion: String): Boolean {
         val latestParts = latestTag.removePrefix("v").split(".").map { it.toIntOrNull() ?: 0 }
