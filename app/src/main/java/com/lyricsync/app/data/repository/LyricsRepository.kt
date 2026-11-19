@@ -1,0 +1,326 @@
+package com.lyricsync.app.data.repository
+
+import android.content.Context
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+import com.google.mlkit.common.model.DownloadConditions
+import com.google.mlkit.common.model.RemoteModelManager
+import com.google.mlkit.nl.languageid.LanguageIdentification
+import com.google.mlkit.nl.translate.TranslateLanguage
+import com.google.mlkit.nl.translate.TranslateRemoteModel
+import com.google.mlkit.nl.translate.Translation
+import com.google.mlkit.nl.translate.TranslatorOptions
+import com.lyricsync.app.data.local.CachedLyricsEntity
+import com.lyricsync.app.data.local.LyricsDatabase
+import com.lyricsync.app.data.remote.LrcLibApi
+import com.lyricsync.app.data.remote.LrcLibResponse
+import com.lyricsync.app.domain.LrcParser
+import com.lyricsync.app.domain.LyricLine
+import com.lyricsync.app.domain.LyricsState
+import com.lyricsync.app.domain.MediaTrackState
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
+import kotlin.math.abs
+
+class LyricsRepository(context: Context) {
+
+    private val dao = LyricsDatabase.getInstance(context).lyricsDao()
+    private val api = LrcLibApi.instance
+    private val gson = Gson()
+    private val lineListType = object : TypeToken<List<LyricLine>>() {}.type
+
+    suspend fun loadAndTranslateLyrics(track: MediaTrackState, targetLang: String) = withContext(Dispatchers.IO) {
+        if (!track.hasActiveTrack) return@withContext
+
+        val trackId = track.trackId
+        val cacheKey = "$trackId|$targetLang"
+
+        // 1. Check Room Offline Cache first
+        val cached = safeCatching { dao.getByKey(cacheKey) }.getOrNull()
+        if (cached != null) {
+            val cachedLines: List<LyricLine> = safeCatching {
+                gson.fromJson<List<LyricLine>>(cached.linesJson, lineListType)
+            }.getOrDefault(emptyList())
+
+            if (cachedLines.isNotEmpty()) {
+                publishIfCurrentTrack(
+                    trackId,
+                    LyricsState(
+                        trackId = trackId,
+                        lines = cachedLines,
+                        isSynced = cached.isSynced,
+                        sourceLang = cached.sourceLang,
+                        targetLang = cached.targetLang,
+                        isLoading = false,
+                        isFromCache = true
+                    )
+                )
+                return@withContext
+            }
+        }
+
+        publishIfCurrentTrack(
+            trackId,
+            LyricsState(
+                trackId = trackId,
+                targetLang = targetLang,
+                isLoading = true,
+                statusMessage = "LRCLIB üzerinden şarkı sözleri çekiliyor..."
+            )
+        )
+
+        // 2. Fetch from LRCLIB API (/api/get with fallback to /api/search)
+        val durationSec = if (track.durationMs > 0) (track.durationMs / 1000L).toInt() else null
+        val response = fetchFromLrcLib(track.artistName, track.trackName, durationSec)
+        currentCoroutineContext().ensureActive()
+
+        if (response == null) {
+            publishIfCurrentTrack(
+                trackId,
+                LyricsState(
+                    trackId = trackId,
+                    targetLang = targetLang,
+                    isLoading = false,
+                    errorMessage = "'${track.trackName}' için şarkı sözü bulunamadı."
+                )
+            )
+            return@withContext
+        }
+
+        // 3. Parse syncedLyrics (.lrc), or fallback to plainLyrics
+        val syncedLines = LrcParser.parseSyncedLyrics(response.syncedLyrics)
+        val isSynced = syncedLines.isNotEmpty()
+        val parsedLines = if (isSynced) {
+            syncedLines
+        } else {
+            LrcParser.parsePlainLyrics(response.plainLyrics)
+        }
+
+        if (parsedLines.isEmpty()) {
+            publishIfCurrentTrack(
+                trackId,
+                LyricsState(
+                    trackId = trackId,
+                    targetLang = targetLang,
+                    isLoading = false,
+                    errorMessage = if (response.instrumental == true) {
+                        "Bu parça enstrümantal (söz içermiyor)."
+                    } else {
+                        "Bu şarkı için söz verisi boş."
+                    }
+                )
+            )
+            return@withContext
+        }
+
+        // Emit original lyrics immediately so synced scrolling starts without waiting for ML Kit
+        publishIfCurrentTrack(
+            trackId,
+            LyricsState(
+                trackId = trackId,
+                lines = parsedLines,
+                isSynced = isSynced,
+                targetLang = targetLang,
+                isLoading = false,
+                statusMessage = "Dil algılanıyor..."
+            )
+        )
+
+        // 4. Identify source language on-device via Google ML Kit Language ID
+        val sampleText = parsedLines.take(15).joinToString("\n") { it.originalText }
+        val langIdentifier = LanguageIdentification.getClient()
+        val detectedTag = try {
+            safeCatching { langIdentifier.identifyLanguage(sampleText).await() }.getOrDefault("en")
+        } finally {
+            runCatching { langIdentifier.close() }
+        }
+        currentCoroutineContext().ensureActive()
+
+        val sourceLang = TranslateLanguage.fromLanguageTag(
+            if (detectedTag == "und" || detectedTag.isBlank()) "en" else detectedTag
+        ) ?: TranslateLanguage.ENGLISH
+
+        if (sourceLang == targetLang) {
+            val finalState = LyricsState(
+                trackId = trackId,
+                lines = parsedLines,
+                isSynced = isSynced,
+                sourceLang = sourceLang,
+                targetLang = targetLang,
+                isLoading = false,
+                statusMessage = null
+            )
+            publishIfCurrentTrack(trackId, finalState)
+            saveToCache(cacheKey, track, sourceLang, targetLang, isSynced, parsedLines)
+            return@withContext
+        }
+
+        // 5. Translate on-device via Google ML Kit Translate
+        val options = TranslatorOptions.Builder()
+            .setSourceLanguage(sourceLang)
+            .setTargetLanguage(targetLang)
+            .build()
+        val translator = Translation.getClient(options)
+
+        try {
+            val modelManager = RemoteModelManager.getInstance()
+            val srcModel = TranslateRemoteModel.Builder(sourceLang).build()
+            val tgtModel = TranslateRemoteModel.Builder(targetLang).build()
+            val isSrcReady = safeCatching { modelManager.isModelDownloaded(srcModel).await() }.getOrDefault(false)
+            val isTgtReady = safeCatching { modelManager.isModelDownloaded(tgtModel).await() }.getOrDefault(false)
+
+            if (!isSrcReady || !isTgtReady) {
+                publishIfCurrentTrack(
+                    trackId,
+                    MediaStateBus.lyricsState.value.copy(
+                        sourceLang = sourceLang,
+                        isDownloadingModel = true,
+                        statusMessage = "Dil modeli (${sourceLang.uppercase()} → ${targetLang.uppercase()}) cihazda yok, arka planda indiriliyor..."
+                    )
+                )
+            } else {
+                publishIfCurrentTrack(
+                    trackId,
+                    MediaStateBus.lyricsState.value.copy(
+                        sourceLang = sourceLang,
+                        statusMessage = "Sözler cihaz içinde çevriliyor (${sourceLang.uppercase()} → ${targetLang.uppercase()})..."
+                    )
+                )
+            }
+
+            // shortcut: allow cellular/wifi download so model works on the go; add wifi-only toggle if needed
+            val conditions = DownloadConditions.Builder().build()
+            translator.downloadModelIfNeeded(conditions).await()
+            currentCoroutineContext().ensureActive()
+
+            publishIfCurrentTrack(
+                trackId,
+                MediaStateBus.lyricsState.value.copy(
+                    isDownloadingModel = false,
+                    statusMessage = "Şarkı sözleri çevriliyor..."
+                )
+            )
+
+            // Deduplicate identical lines (e.g. repeated chorus) for faster translation
+            val lineTranslationCache = HashMap<String, String>()
+            val translatedLines = parsedLines.map { line ->
+                currentCoroutineContext().ensureActive()
+                val clean = line.originalText.trim()
+                val translated = lineTranslationCache.getOrPut(clean) {
+                    safeCatching { translator.translate(clean).await() }.getOrDefault(clean)
+                }
+                line.copy(translatedText = translated)
+            }
+
+            // 6. Save translated lyrics to Room cache for instant offline reuse
+            saveToCache(cacheKey, track, sourceLang, targetLang, isSynced, translatedLines)
+
+            publishIfCurrentTrack(
+                trackId,
+                LyricsState(
+                    trackId = trackId,
+                    lines = translatedLines,
+                    isSynced = isSynced,
+                    sourceLang = sourceLang,
+                    targetLang = targetLang,
+                    isLoading = false,
+                    isDownloadingModel = false,
+                    isFromCache = false,
+                    statusMessage = null
+                )
+            )
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (e: Exception) {
+            publishIfCurrentTrack(
+                trackId,
+                MediaStateBus.lyricsState.value.copy(
+                    isDownloadingModel = false,
+                    statusMessage = null,
+                    errorMessage = "Çeviri modeli hatası: ${e.localizedMessage ?: "Bilinmeyen hata"}"
+                )
+            )
+        } finally {
+            translator.close()
+        }
+    }
+
+    private fun publishIfCurrentTrack(trackId: String, state: LyricsState) {
+        if (MediaStateBus.trackState.value.trackId == trackId) {
+            MediaStateBus.updateLyricsState(state)
+        }
+    }
+
+    private suspend fun fetchFromLrcLib(
+        artistName: String,
+        trackName: String,
+        durationSec: Int?
+    ): LrcLibResponse? {
+        // Primary: exact /api/get endpoint with artist_name, track_name, duration
+        if (artistName.isNotBlank()) {
+            safeCatching {
+                val direct = api.getLyrics(
+                    artistName = artistName,
+                    trackName = trackName,
+                    durationSeconds = durationSec
+                )
+                if (!direct.syncedLyrics.isNullOrBlank() || !direct.plainLyrics.isNullOrBlank()) {
+                    return direct
+                }
+            }
+        }
+
+        // Fallback: /api/search if Spotify duration differs slightly or track has remaster suffix
+        return safeCatching {
+            val cleanTrack = trackName.substringBefore(" - ").substringBefore(" (").trim()
+            val results = if (artistName.isNotBlank()) {
+                api.searchLyrics(artistName = artistName, trackName = cleanTrack)
+            } else {
+                api.searchLyrics(query = cleanTrack)
+            }
+            results.sortedWith(
+                compareByDescending<LrcLibResponse> { !it.syncedLyrics.isNullOrBlank() }
+                    .thenBy { resp ->
+                        if (durationSec != null && resp.duration != null) {
+                            abs(resp.duration.toInt() - durationSec)
+                        } else {
+                            0
+                        }
+                    }
+            ).firstOrNull()
+        }.getOrNull()
+    }
+
+    private suspend fun saveToCache(
+        cacheKey: String,
+        track: MediaTrackState,
+        sourceLang: String,
+        targetLang: String,
+        isSynced: Boolean,
+        lines: List<LyricLine>
+    ) {
+        safeCatching {
+            dao.insert(
+                CachedLyricsEntity(
+                    cacheKey = cacheKey,
+                    artistName = track.artistName,
+                    trackName = track.trackName,
+                    sourceLang = sourceLang,
+                    targetLang = targetLang,
+                    isSynced = isSynced,
+                    linesJson = gson.toJson(lines)
+                )
+            )
+        }
+    }
+
+    private inline fun <T> safeCatching(block: () -> T): Result<T> {
+        return runCatching(block).onFailure {
+            if (it is CancellationException) throw it
+        }
+    }
+}

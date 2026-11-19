@@ -1,0 +1,2 @@
+-keep class com.lyricsync.app.data.remote.** { *; }
+-keep class com.lyricsync.app.domain.** { *; }
