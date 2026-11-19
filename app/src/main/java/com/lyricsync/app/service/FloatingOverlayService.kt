@@ -92,7 +92,7 @@ class FloatingOverlayService : Service(),
 
     private var windowManager: WindowManager? = null
     private var overlayView: ComposeView? = null
-    private lateinit var layoutParams: WindowManager.LayoutParams
+    private lateinit var windowParams: WindowManager.LayoutParams
 
     override fun onCreate() {
         super.onCreate()
@@ -141,7 +141,7 @@ class FloatingOverlayService : Service(),
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
-        layoutParams = WindowManager.LayoutParams(
+        windowParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             overlayType,
@@ -162,10 +162,10 @@ class FloatingOverlayService : Service(),
             setContent {
                 FloatingSubtitleOverlayContent(
                     onDrag = { dx, dy ->
-                        layoutParams.x += dx.roundToInt()
-                        layoutParams.y = (layoutParams.y + dy.roundToInt()).coerceAtLeast(0)
+                        windowParams.x += dx.roundToInt()
+                        windowParams.y = (windowParams.y + dy.roundToInt()).coerceAtLeast(0)
                         runCatching {
-                            windowManager?.updateViewLayout(this, layoutParams)
+                            windowManager?.updateViewLayout(this, windowParams)
                         }
                     },
                     onClose = { stopSelf() }
@@ -175,7 +175,7 @@ class FloatingOverlayService : Service(),
 
         overlayView = composeView
         runCatching {
-            windowManager?.addView(composeView, layoutParams)
+            windowManager?.addView(composeView, windowParams)
         }
     }
 
