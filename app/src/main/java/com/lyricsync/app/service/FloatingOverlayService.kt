@@ -38,10 +38,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DragIndicator
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -74,6 +77,7 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.lyricsync.app.MainActivity
 import com.lyricsync.app.R
 import com.lyricsync.app.data.repository.MediaStateBus
+import com.lyricsync.app.domain.LyricDisplayMode
 import kotlin.math.roundToInt
 
 class FloatingOverlayService : Service(),
@@ -96,13 +100,14 @@ class FloatingOverlayService : Service(),
 
     override fun onCreate() {
         super.onCreate()
+        MediaStateBus.init(applicationContext)
         savedStateRegistryController.performRestore(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
 
         // Android 8+ requires startForeground() before any early stopSelf(), and Android 14 requires FGS type
-        val notification = buildForegroundNotification()
+        val notification = buildForegroundNotification(MediaStateBus.overlayConfig.value.isTouchLocked)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
                 NOTIFICATION_ID,
@@ -123,9 +128,15 @@ class FloatingOverlayService : Service(),
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP_OVERLAY) {
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            ACTION_STOP_OVERLAY -> {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            ACTION_TOGGLE_LOCK -> {
+                MediaStateBus.toggleOverlayTouchLock()
+                updateTouchLockWindowFlag(MediaStateBus.overlayConfig.value.isTouchLocked)
+            }
         }
         return START_STICKY
     }
@@ -141,17 +152,25 @@ class FloatingOverlayService : Service(),
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
+        val initialConfig = MediaStateBus.overlayConfig.value
+        val baseFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+        val initialFlags = if (initialConfig.isTouchLocked) {
+            baseFlags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        } else {
+            baseFlags
+        }
+
         windowParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             overlayType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            initialFlags,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            x = 0
-            y = 180
+            x = initialConfig.x
+            y = initialConfig.y.coerceAtLeast(0)
         }
 
         val composeView = ComposeView(this).apply {
@@ -167,6 +186,13 @@ class FloatingOverlayService : Service(),
                         runCatching {
                             windowManager?.updateViewLayout(this, windowParams)
                         }
+                        MediaStateBus.updateOverlayPosition(windowParams.x, windowParams.y)
+                    },
+                    onToggleLock = {
+                        MediaStateBus.toggleOverlayTouchLock()
+                    },
+                    onTouchLockChanged = { locked ->
+                        updateTouchLockWindowFlag(locked)
                     },
                     onClose = { stopSelf() }
                 )
@@ -177,6 +203,20 @@ class FloatingOverlayService : Service(),
         runCatching {
             windowManager?.addView(composeView, windowParams)
         }
+    }
+
+    private fun updateTouchLockWindowFlag(isLocked: Boolean) {
+        if (!::windowParams.isInitialized) return
+        if (isLocked) {
+            windowParams.flags = windowParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        } else {
+            windowParams.flags = windowParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        }
+        overlayView?.let { view ->
+            runCatching { windowManager?.updateViewLayout(view, windowParams) }
+        }
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, buildForegroundNotification(isLocked))
     }
 
     override fun onDestroy() {
@@ -195,7 +235,7 @@ class FloatingOverlayService : Service(),
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun buildForegroundNotification(): Notification {
+    private fun buildForegroundNotification(isTouchLocked: Boolean): Notification {
         val channelId = "lyricsync_overlay_channel"
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -223,11 +263,27 @@ class FloatingOverlayService : Service(),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+        val toggleLockIntent = PendingIntent.getService(
+            this,
+            2,
+            Intent(this, FloatingOverlayService::class.java).apply {
+                action = ACTION_TOGGLE_LOCK
+            },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val contentText = if (isTouchLocked) {
+            "Dokunma kilidi aktif — kilidi açmak için aşağıdaki düğmeye dokunun"
+        } else {
+            "Spotify üzerinde anlık şarkı sözü çevirisi gösteriliyor"
+        }
+
         return NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.drawable.ic_music_note)
             .setContentTitle("LyricSync Yüzen Altyazı Aktif")
-            .setContentText("Spotify üzerinde anlık şarkı sözü çevirisi gösteriliyor")
+            .setContentText(contentText)
             .setContentIntent(openAppIntent)
+            .addAction(0, if (isTouchLocked) "Kilidi Aç" else "Kilitle", toggleLockIntent)
             .addAction(0, "Kapat", stopIntent)
             .setOngoing(true)
             .build()
@@ -236,6 +292,7 @@ class FloatingOverlayService : Service(),
     companion object {
         private const val NOTIFICATION_ID = 2026
         const val ACTION_STOP_OVERLAY = "com.lyricsync.app.ACTION_STOP_OVERLAY"
+        const val ACTION_TOGGLE_LOCK = "com.lyricsync.app.ACTION_TOGGLE_LOCK"
 
         fun start(context: Context) {
             if (!Settings.canDrawOverlays(context)) return
@@ -256,12 +313,20 @@ class FloatingOverlayService : Service(),
 @Composable
 private fun FloatingSubtitleOverlayContent(
     onDrag: (Float, Float) -> Unit,
+    onToggleLock: () -> Unit,
+    onTouchLockChanged: (Boolean) -> Unit,
     onClose: () -> Unit
 ) {
     val trackState by MediaStateBus.trackState.collectAsState()
     val lyricsState by MediaStateBus.lyricsState.collectAsState()
     val activeIndex by MediaStateBus.activeLineIndex.collectAsState()
+    val overlayConfig by MediaStateBus.overlayConfig.collectAsState()
+    val displayMode by MediaStateBus.displayMode.collectAsState()
     var isCollapsed by remember { mutableStateOf(false) }
+
+    LaunchedEffect(overlayConfig.isTouchLocked) {
+        onTouchLockChanged(overlayConfig.isTouchLocked)
+    }
 
     val activeLine = remember(lyricsState.lines, activeIndex) {
         if (activeIndex in lyricsState.lines.indices) {
@@ -272,6 +337,7 @@ private fun FloatingSubtitleOverlayContent(
     }
 
     val shape = RoundedCornerShape(22.dp)
+    val bgAlpha = overlayConfig.opacity.coerceIn(0.35f, 1.0f)
 
     Box(
         modifier = Modifier
@@ -281,24 +347,34 @@ private fun FloatingSubtitleOverlayContent(
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xE60F172A),
-                        Color(0xE61E293B)
+                        Color(0xFF0F172A).copy(alpha = bgAlpha),
+                        Color(0xFF1E293B).copy(alpha = bgAlpha)
                     )
                 )
             )
             .border(
                 width = 1.dp,
                 brush = Brush.horizontalGradient(
-                    listOf(Color(0x8838BDF8), Color(0x44818CF8))
+                    if (overlayConfig.isTouchLocked) {
+                        listOf(Color(0x66FBBF24), Color(0x33F59E0B))
+                    } else {
+                        listOf(Color(0x8838BDF8), Color(0x44818CF8))
+                    }
                 ),
                 shape = shape
             )
-            .pointerInput(Unit) {
-                detectDragGestures { change, dragAmount ->
-                    change.consume()
-                    onDrag(dragAmount.x, dragAmount.y)
+            .then(
+                if (!overlayConfig.isTouchLocked) {
+                    Modifier.pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            onDrag(dragAmount.x, dragAmount.y)
+                        }
+                    }
+                } else {
+                    Modifier
                 }
-            }
+            )
             .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
         if (isCollapsed) {
@@ -325,7 +401,7 @@ private fun FloatingSubtitleOverlayContent(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                // Header bar with drag indicator, track pill, collapse, and close buttons
+                // Header bar with drag indicator, track pill, lock, and close buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -335,12 +411,14 @@ private fun FloatingSubtitleOverlayContent(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .weight(1f)
-                            .clickable { isCollapsed = true }
+                            .clickable(enabled = !overlayConfig.isTouchLocked) {
+                                isCollapsed = true
+                            }
                     ) {
                         Icon(
-                            imageVector = Icons.Default.DragIndicator,
-                            contentDescription = "Sürükle",
-                            tint = Color(0xFF94A3B8),
+                            imageVector = if (overlayConfig.isTouchLocked) Icons.Default.Lock else Icons.Default.DragIndicator,
+                            contentDescription = if (overlayConfig.isTouchLocked) "Kilitli" else "Sürükle",
+                            tint = if (overlayConfig.isTouchLocked) Color(0xFFFBBF24) else Color(0xFF94A3B8),
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
@@ -357,28 +435,48 @@ private fun FloatingSubtitleOverlayContent(
                         )
                     }
 
-                    Spacer(modifier = Modifier.width(8.dp))
+                    if (!overlayConfig.isTouchLocked) {
+                        Spacer(modifier = Modifier.width(6.dp))
 
-                    Box(
-                        modifier = Modifier
-                            .size(22.dp)
-                            .clip(CircleShape)
-                            .background(Color(0x33FFFFFF))
-                            .clickable { onClose() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Kapat",
-                            tint = Color.White,
-                            modifier = Modifier.size(13.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x33FFFFFF))
+                                .clickable { onToggleLock() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LockOpen,
+                                contentDescription = "Dokunmayı Kilitle",
+                                tint = Color.White,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(6.dp))
+
+                        Box(
+                            modifier = Modifier
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x33FFFFFF))
+                                .clickable { onClose() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Kapat",
+                                tint = Color.White,
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // Active synced lyric original + translation
+                // Active synced lyric based on displayMode & overlay fontSizeSp
                 AnimatedContent(
                     targetState = activeLine,
                     transitionSpec = { fadeIn() togetherWith fadeOut() },
@@ -406,21 +504,36 @@ private fun FloatingSubtitleOverlayContent(
                                 )
                             }
                             line != null -> {
-                                Text(
-                                    text = line.originalText,
-                                    color = Color.White,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    textAlign = TextAlign.Center
-                                )
-                                if (line.translatedText.isNotBlank() &&
+                                val hasTranslation = line.translatedText.isNotBlank() &&
                                     line.translatedText != line.originalText
-                                ) {
-                                    Spacer(modifier = Modifier.height(3.dp))
+                                val showOriginal = displayMode == LyricDisplayMode.DUAL ||
+                                    displayMode == LyricDisplayMode.ORIGINAL_ONLY ||
+                                    (displayMode == LyricDisplayMode.TRANSLATION_ONLY && !hasTranslation)
+                                val showTranslation = hasTranslation && (
+                                    displayMode == LyricDisplayMode.DUAL ||
+                                        displayMode == LyricDisplayMode.TRANSLATION_ONLY
+                                    )
+
+                                if (showOriginal) {
+                                    Text(
+                                        text = line.originalText,
+                                        color = Color.White,
+                                        fontSize = overlayConfig.fontSizeSp.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+
+                                if (showTranslation) {
+                                    if (showOriginal) Spacer(modifier = Modifier.height(3.dp))
                                     Text(
                                         text = line.translatedText,
                                         color = Color(0xFF38BDF8),
-                                        fontSize = 13.sp,
+                                        fontSize = if (displayMode == LyricDisplayMode.TRANSLATION_ONLY) {
+                                            overlayConfig.fontSizeSp.sp
+                                        } else {
+                                            (overlayConfig.fontSizeSp - 2f).coerceAtLeast(11f).sp
+                                        },
                                         fontWeight = FontWeight.Medium,
                                         textAlign = TextAlign.Center
                                     )

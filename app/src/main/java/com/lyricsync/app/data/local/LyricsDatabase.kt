@@ -31,6 +31,9 @@ interface LyricsDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: CachedLyricsEntity)
 
+    @Query("SELECT COUNT(*) FROM cached_lyrics")
+    suspend fun count(): Int
+
     @Query("DELETE FROM cached_lyrics")
     suspend fun clearAll()
 }

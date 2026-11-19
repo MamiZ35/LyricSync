@@ -13,13 +13,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -42,6 +46,7 @@ import androidx.compose.ui.unit.sp
 fun PermissionOnboardingScreen(
     hasNotificationAccess: Boolean,
     hasOverlayPermission: Boolean,
+    onOpenAppDetails: () -> Unit,
     onRequestNotificationAccess: () -> Unit,
     onRequestOverlayPermission: () -> Unit,
     onContinueToApp: () -> Unit
@@ -53,13 +58,14 @@ fun PermissionOnboardingScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
             Box(
                 modifier = Modifier
-                    .size(72.dp)
+                    .size(68.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
@@ -68,11 +74,11 @@ fun PermissionOnboardingScreen(
                     imageVector = Icons.Default.MusicNote,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(38.dp)
+                    modifier = Modifier.size(36.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             Text(
                 text = "LyricSync Kurulumu",
@@ -84,26 +90,24 @@ fun PermissionOnboardingScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Spotify ve diğer müzik uygulamalarından çalan şarkıyı yakalamak ve ekran üstü canlı çeviri altyazısı göstermek için aşağıdaki izinleri adım adım tamamlayın.",
+                text = "Spotify'dan canlı şarkı yakalamak ve ekran üstü altyazı göstermek için izinleri tamamlayın ya da manuel arama moduyla devam edin.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(28.dp))
+            Spacer(modifier = Modifier.height(22.dp))
 
-            PermissionStepCard(
-                stepNumber = "1",
-                title = "Bildirim Erişimi (Zorunlu)",
-                description = "Aktif çalan şarkının adını, sanatçısını ve anlık saniyesini yakalamak için gereklidir.",
-                icon = Icons.Default.NotificationsActive,
+            // Step 1: Notification Access + Android 13+ Restricted Settings Unlock Guide
+            NotificationPermissionCard(
                 isGranted = hasNotificationAccess,
-                buttonText = "Bildirim Erişimini Aç",
-                onAction = onRequestNotificationAccess
+                onOpenAppDetails = onOpenAppDetails,
+                onRequestNotificationAccess = onRequestNotificationAccess
             )
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Step 2: Overlay Permission
             PermissionStepCard(
                 stepNumber = "2",
                 title = "Diğer Uygulamaların Üstünde Gösterme",
@@ -114,25 +118,180 @@ fun PermissionOnboardingScreen(
                 onAction = onRequestOverlayPermission
             )
 
-            Spacer(modifier = Modifier.height(28.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             Button(
                 onClick = onContinueToApp,
-                enabled = hasNotificationAccess,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Text(
-                    text = if (hasNotificationAccess && hasOverlayPermission) {
-                        "Uygulamayı Başlat"
-                    } else if (hasNotificationAccess) {
-                        "Yüzen Pencere Olmadan Devam Et"
-                    } else {
-                        "Önce 1. Adımı Tamamlayın"
+                    text = when {
+                        hasNotificationAccess && hasOverlayPermission -> "Uygulamayı Başlat"
+                        hasNotificationAccess -> "Yüzen Pencere Olmadan Devam Et"
+                        else -> "İzinsiz Göz At (Manuel Şarkı Arama Modu)"
                     },
-                    fontSize = 15.sp,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NotificationPermissionCard(
+    isGranted: Boolean,
+    onOpenAppDetails: () -> Unit,
+    onRequestNotificationAccess: () -> Unit
+) {
+    val borderColor = if (isGranted) {
+        Color(0xFF10B981)
+    } else {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, borderColor, RoundedCornerShape(20.dp))
+            .padding(18.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (isGranted) Color(0xFF10B981).copy(alpha = 0.15f)
+                        else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                if (isGranted) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = "Verildi",
+                        tint = Color(0xFF10B981),
+                        modifier = Modifier.size(22.dp)
+                    )
+                } else {
+                    Text(
+                        text = "1",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Bildirim Erişimi (Otomatik Takip)",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = if (isGranted) "İzin Verildi ✓" else "Bekleniyor",
+                    fontSize = 12.sp,
+                    color = if (isGranted) Color(0xFF10B981) else MaterialTheme.colorScheme.primary
+                )
+            }
+
+            Icon(
+                imageVector = Icons.Default.NotificationsActive,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Text(
+            text = "Spotify'da çalan şarkıyı, sanatçıyı ve anlık saniyeyi yakalamak için gereklidir.",
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        if (!isGranted) {
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Android 13+ Restricted Settings explicit walkthrough
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xFFF59E0B).copy(alpha = 0.12f))
+                    .border(1.dp, Color(0xFFF59E0B).copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+                    .padding(12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = Color(0xFFF59E0B),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "\"Güvenliğiniz için bu ayar kullanılamıyor\" uyarısı çözümü:",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Android 13+ dışarıdan kurulan APK'larda bu ayarı kilitler. Açmak için:\n" +
+                        "• Önce aşağıdaki 1.A düğmesiyle Uygulama Bilgileri'ni açın.\n" +
+                        "• Sağ üstteki ⋮ (üç nokta) menüsünden \"Kısıtlanmış ayarlara izin ver\" seçeneğine dokunun.\n" +
+                        "• Geri dönüp 1.B ile Bildirim Erişimi'ni açın.",
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedButton(
+                onClick = onOpenAppDetails,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = Color(0xFFF59E0B)
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.OpenInNew,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "1.A: Uygulama Bilgilerini Aç (Kısıtlanmış Ayar İzni)",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Button(
+                onClick = onRequestNotificationAccess,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    text = "1.B: Bildirim Erişimini Aç",
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold
                 )
             }

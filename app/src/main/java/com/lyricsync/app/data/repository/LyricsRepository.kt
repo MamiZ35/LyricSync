@@ -33,33 +33,39 @@ class LyricsRepository(context: Context) {
     private val gson = Gson()
     private val lineListType = object : TypeToken<List<LyricLine>>() {}.type
 
-    suspend fun loadAndTranslateLyrics(track: MediaTrackState, targetLang: String) = withContext(Dispatchers.IO) {
+    suspend fun loadAndTranslateLyrics(
+        track: MediaTrackState,
+        targetLang: String,
+        preFetchedResponse: LrcLibResponse? = null
+    ) = withContext(Dispatchers.IO) {
         if (!track.hasActiveTrack) return@withContext
 
         val trackId = track.trackId
         val cacheKey = "$trackId|$targetLang"
 
-        // 1. Check Room Offline Cache first
-        val cached = safeCatching { dao.getByKey(cacheKey) }.getOrNull()
-        if (cached != null) {
-            val cachedLines: List<LyricLine> = safeCatching {
-                gson.fromJson<List<LyricLine>>(cached.linesJson, lineListType)
-            }.getOrDefault(emptyList())
+        // 1. Check Room Offline Cache first unless user explicitly picked a manual result
+        if (preFetchedResponse == null) {
+            val cached = safeCatching { dao.getByKey(cacheKey) }.getOrNull()
+            if (cached != null) {
+                val cachedLines: List<LyricLine> = safeCatching {
+                    gson.fromJson<List<LyricLine>>(cached.linesJson, lineListType)
+                }.getOrDefault(emptyList())
 
-            if (cachedLines.isNotEmpty()) {
-                publishIfCurrentTrack(
-                    trackId,
-                    LyricsState(
-                        trackId = trackId,
-                        lines = cachedLines,
-                        isSynced = cached.isSynced,
-                        sourceLang = cached.sourceLang,
-                        targetLang = cached.targetLang,
-                        isLoading = false,
-                        isFromCache = true
+                if (cachedLines.isNotEmpty()) {
+                    publishIfCurrentTrack(
+                        trackId,
+                        LyricsState(
+                            trackId = trackId,
+                            lines = cachedLines,
+                            isSynced = cached.isSynced,
+                            sourceLang = cached.sourceLang,
+                            targetLang = cached.targetLang,
+                            isLoading = false,
+                            isFromCache = true
+                        )
                     )
-                )
-                return@withContext
+                    return@withContext
+                }
             }
         }
 
@@ -75,7 +81,7 @@ class LyricsRepository(context: Context) {
 
         // 2. Fetch from LRCLIB API (/api/get with fallback to /api/search)
         val durationSec = if (track.durationMs > 0) (track.durationMs / 1000L).toInt() else null
-        val response = fetchFromLrcLib(track.artistName, track.trackName, durationSec)
+        val response = preFetchedResponse ?: fetchFromLrcLib(track.artistName, track.trackName, durationSec)
         currentCoroutineContext().ensureActive()
 
         if (response == null) {
@@ -174,12 +180,13 @@ class LyricsRepository(context: Context) {
             val isTgtReady = safeCatching { modelManager.isModelDownloaded(tgtModel).await() }.getOrDefault(false)
 
             if (!isSrcReady || !isTgtReady) {
+                val wifiNote = if (MediaStateBus.wifiOnlyDownload.value) " (Wi-Fi bekleniyor)" else ""
                 publishIfCurrentTrack(
                     trackId,
                     MediaStateBus.lyricsState.value.copy(
                         sourceLang = sourceLang,
                         isDownloadingModel = true,
-                        statusMessage = "Dil modeli (${sourceLang.uppercase()} → ${targetLang.uppercase()}) cihazda yok, arka planda indiriliyor..."
+                        statusMessage = "Dil modeli (${sourceLang.uppercase()} → ${targetLang.uppercase()}) indiriliyor$wifiNote..."
                     )
                 )
             } else {
@@ -192,8 +199,9 @@ class LyricsRepository(context: Context) {
                 )
             }
 
-            // shortcut: allow cellular/wifi download so model works on the go; add wifi-only toggle if needed
-            val conditions = DownloadConditions.Builder().build()
+            val conditions = DownloadConditions.Builder().apply {
+                if (MediaStateBus.wifiOnlyDownload.value) requireWifi()
+            }.build()
             translator.downloadModelIfNeeded(conditions).await()
             currentCoroutineContext().ensureActive()
 
@@ -246,6 +254,53 @@ class LyricsRepository(context: Context) {
             )
         } finally {
             translator.close()
+        }
+    }
+
+    suspend fun searchLyricsManual(query: String): List<LrcLibResponse> = withContext(Dispatchers.IO) {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return@withContext emptyList()
+        safeCatching {
+            api.searchLyrics(query = trimmed)
+                .filter { !it.syncedLyrics.isNullOrBlank() || !it.plainLyrics.isNullOrBlank() }
+                .sortedByDescending { !it.syncedLyrics.isNullOrBlank() }
+        }.getOrDefault(emptyList())
+    }
+
+    suspend fun selectManualLyrics(item: LrcLibResponse, targetLang: String) {
+        val manualTrack = MediaTrackState(
+            trackName = item.trackName.orEmpty().ifBlank { "Bilinmeyen Şarkı" },
+            artistName = item.artistName.orEmpty().ifBlank { "Bilinmeyen Sanatçı" },
+            durationMs = ((item.duration ?: 0.0) * 1000.0).toLong().coerceAtLeast(0L),
+            isPlaying = false,
+            isManualOverride = true
+        )
+        MediaStateBus.updateTrackState(manualTrack)
+        loadAndTranslateLyrics(manualTrack, targetLang, preFetchedResponse = item)
+    }
+
+    suspend fun getCachedSongCount(): Int = withContext(Dispatchers.IO) {
+        safeCatching { dao.count() }.getOrDefault(0)
+    }
+
+    suspend fun clearCache() = withContext(Dispatchers.IO) {
+        safeCatching { dao.clearAll() }
+    }
+
+    suspend fun getDownloadedModels(): List<String> = withContext(Dispatchers.IO) {
+        safeCatching {
+            RemoteModelManager.getInstance()
+                .getDownloadedModels(TranslateRemoteModel::class.java)
+                .await()
+                .map { it.language }
+                .sorted()
+        }.getOrDefault(emptyList())
+    }
+
+    suspend fun deleteModel(langCode: String) = withContext(Dispatchers.IO) {
+        safeCatching {
+            val model = TranslateRemoteModel.Builder(langCode).build()
+            RemoteModelManager.getInstance().deleteDownloadedModel(model).await()
         }
     }
 

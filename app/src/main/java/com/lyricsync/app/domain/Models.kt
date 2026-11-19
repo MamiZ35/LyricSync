@@ -1,12 +1,17 @@
 package com.lyricsync.app.domain
 
+import android.graphics.Bitmap
+
 data class MediaTrackState(
     val trackName: String = "",
     val artistName: String = "",
     val packageName: String = "",
     val durationMs: Long = 0L,
     val positionMs: Long = 0L,
-    val isPlaying: Boolean = false
+    val isPlaying: Boolean = false,
+    val albumArt: Bitmap? = null,
+    val accentColorArgb: Int? = null,
+    val isManualOverride: Boolean = false
 ) {
     val hasActiveTrack: Boolean get() = trackName.isNotBlank()
     val trackId: String get() = "${artistName.lowercase().trim()}|${trackName.lowercase().trim()}"
@@ -34,3 +39,17 @@ data class LyricsState(
 enum class ThemeMode {
     SYSTEM, DARK, LIGHT
 }
+
+enum class LyricDisplayMode(val label: String) {
+    DUAL("Çift Dil"),
+    TRANSLATION_ONLY("Sadece Çeviri"),
+    ORIGINAL_ONLY("Sadece Orijinal")
+}
+
+data class OverlayConfig(
+    val fontSizeSp: Float = 15f,
+    val opacity: Float = 0.90f,
+    val isTouchLocked: Boolean = false,
+    val x: Int = 0,
+    val y: Int = 180
+)

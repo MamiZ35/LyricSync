@@ -2,6 +2,8 @@ package com.lyricsync.app.service
 
 import android.content.ComponentName
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
@@ -33,6 +35,11 @@ class MediaNotificationListenerService : NotificationListenerService() {
     private var positionTickerJob: Job? = null
     private lateinit var repository: LyricsRepository
 
+    private var lastSyncedControllerTrackId: String = ""
+    private var cachedArtTrackId: String = ""
+    private var cachedAlbumArt: Bitmap? = null
+    private var cachedAccentColor: Int? = null
+
     private val sessionsChangedListener =
         MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
             selectAndAttachController(controllers)
@@ -58,9 +65,33 @@ class MediaNotificationListenerService : NotificationListenerService() {
 
     override fun onCreate() {
         super.onCreate()
+        MediaStateBus.init(applicationContext)
         repository = LyricsRepository(applicationContext)
         mediaSessionManager =
             getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
+
+        MediaStateBus.onPlayPauseToggle = {
+            activeController?.let { controller ->
+                if (controller.playbackState?.state == PlaybackState.STATE_PLAYING) {
+                    controller.transportControls.pause()
+                } else {
+                    controller.transportControls.play()
+                }
+            }
+        }
+        MediaStateBus.onSeekToMs = { posMs ->
+            activeController?.let { controller ->
+                controller.transportControls.seekTo(posMs)
+                val isPlaying = controller.playbackState?.state == PlaybackState.STATE_PLAYING
+                MediaStateBus.updatePosition(posMs, isPlaying)
+            }
+        }
+        MediaStateBus.onSkipNext = {
+            activeController?.transportControls?.skipToNext()
+        }
+        MediaStateBus.onSkipPrevious = {
+            activeController?.transportControls?.skipToPrevious()
+        }
 
         // Automatically fetch & translate lyrics whenever the active track or target language changes
         serviceScope.launch {
@@ -70,7 +101,7 @@ class MediaNotificationListenerService : NotificationListenerService() {
             ) { _, targetLang ->
                 Pair(MediaStateBus.trackState.value, targetLang)
             }.collectLatest { (track, targetLang) ->
-                if (track.hasActiveTrack) {
+                if (track.hasActiveTrack && !track.isManualOverride) {
                     repository.loadAndTranslateLyrics(track, targetLang)
                 }
             }
@@ -108,6 +139,10 @@ class MediaNotificationListenerService : NotificationListenerService() {
     }
 
     override fun onDestroy() {
+        MediaStateBus.onPlayPauseToggle = null
+        MediaStateBus.onSeekToMs = null
+        MediaStateBus.onSkipNext = null
+        MediaStateBus.onSkipPrevious = null
         cleanupController()
         runCatching {
             mediaSessionManager?.removeOnActiveSessionsChangedListener(sessionsChangedListener)
@@ -161,6 +196,28 @@ class MediaNotificationListenerService : NotificationListenerService() {
         val duration = (metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L).coerceAtLeast(0L)
         val isPlaying = playbackState?.state == PlaybackState.STATE_PLAYING
         val position = computeCurrentPosition(playbackState, duration)
+        val controllerTrackId = "${artist.lowercase()}|${title.lowercase()}"
+
+        // Do not overwrite user's manual search unless a live player switched to a different playing track
+        val currentState = MediaStateBus.trackState.value
+        if (currentState.isManualOverride) {
+            val isNewLiveTrack = title.isNotBlank() &&
+                isPlaying &&
+                controllerTrackId != lastSyncedControllerTrackId
+            if (!isNewLiveTrack) return
+        }
+
+        lastSyncedControllerTrackId = controllerTrackId
+
+        if (title.isBlank()) return
+
+        if (cachedArtTrackId != controllerTrackId || cachedAlbumArt == null) {
+            val rawArt = metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
+                ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_ART)
+            cachedArtTrackId = controllerTrackId
+            cachedAlbumArt = rawArt?.let { downscaleBitmap(it, 256) }
+            cachedAccentColor = cachedAlbumArt?.let { extractDominantColor(it) }
+        }
 
         MediaStateBus.updateTrackState(
             MediaTrackState(
@@ -169,7 +226,10 @@ class MediaNotificationListenerService : NotificationListenerService() {
                 packageName = controller.packageName,
                 durationMs = duration,
                 positionMs = position,
-                isPlaying = isPlaying
+                isPlaying = isPlaying,
+                albumArt = cachedAlbumArt,
+                accentColorArgb = cachedAccentColor,
+                isManualOverride = false
             )
         )
     }
@@ -181,7 +241,7 @@ class MediaNotificationListenerService : NotificationListenerService() {
             while (isActive) {
                 val controller = activeController
                 val state = controller?.playbackState
-                if (controller != null && state != null) {
+                if (controller != null && state != null && !MediaStateBus.trackState.value.isManualOverride) {
                     val isPlaying = state.state == PlaybackState.STATE_PLAYING
                     val duration = MediaStateBus.trackState.value.durationMs
                     val pos = computeCurrentPosition(state, duration)
@@ -220,5 +280,50 @@ class MediaNotificationListenerService : NotificationListenerService() {
         positionTickerJob?.cancel()
         activeController?.unregisterCallback(controllerCallback)
         activeController = null
+        lastSyncedControllerTrackId = ""
+        MediaStateBus.clearTrackIfSessionEnded()
+    }
+
+    private fun downscaleBitmap(source: Bitmap, maxDim: Int): Bitmap {
+        val width = source.width
+        val height = source.height
+        if (width <= maxDim && height <= maxDim) return source
+        val scale = maxDim.toFloat() / maxOf(width, height).toFloat()
+        val targetW = (width * scale).toInt().coerceAtLeast(1)
+        val targetH = (height * scale).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(source, targetW, targetH, true)
+    }
+
+    private fun extractDominantColor(bitmap: Bitmap): Int? {
+        val w = bitmap.width
+        val h = bitmap.height
+        if (w <= 0 || h <= 0) return null
+
+        val stepX = (w / 10).coerceAtLeast(1)
+        val stepY = (h / 10).coerceAtLeast(1)
+        var rSum = 0L
+        var gSum = 0L
+        var bSum = 0L
+        var count = 0
+
+        for (y in 0 until h step stepY) {
+            for (x in 0 until w step stepX) {
+                val pixel = bitmap.getPixel(x, y)
+                val r = Color.red(pixel)
+                val g = Color.green(pixel)
+                val b = Color.blue(pixel)
+                val maxC = maxOf(r, g, b)
+                val minC = minOf(r, g, b)
+                // Prefer colorful pixels over pure black/white borders
+                if (maxC > 30 && (maxC - minC) > 20) {
+                    rSum += r
+                    gSum += g
+                    bSum += b
+                    count++
+                }
+            }
+        }
+        if (count == 0) return null
+        return Color.rgb((rSum / count).toInt(), (gSum / count).toInt(), (bSum / count).toInt())
     }
 }

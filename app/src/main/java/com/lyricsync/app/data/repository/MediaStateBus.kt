@@ -1,9 +1,14 @@
 package com.lyricsync.app.data.repository
 
+import android.content.Context
 import com.google.mlkit.nl.translate.TranslateLanguage
+import com.lyricsync.app.data.local.AppPrefs
 import com.lyricsync.app.domain.LrcParser
+import com.lyricsync.app.domain.LyricDisplayMode
 import com.lyricsync.app.domain.LyricsState
 import com.lyricsync.app.domain.MediaTrackState
+import com.lyricsync.app.domain.OverlayConfig
+import com.lyricsync.app.domain.ThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,11 +23,26 @@ object MediaStateBus {
         TranslateLanguage.fromLanguageTag(Locale.getDefault().language)
             ?: TranslateLanguage.TURKISH
 
+    @Volatile
+    private var prefs: AppPrefs? = null
+
     private val _trackState = MutableStateFlow(MediaTrackState())
     val trackState: StateFlow<MediaTrackState> = _trackState.asStateFlow()
 
     private val _targetLanguage = MutableStateFlow(defaultTargetLang)
     val targetLanguage: StateFlow<String> = _targetLanguage.asStateFlow()
+
+    private val _themeMode = MutableStateFlow(ThemeMode.DARK)
+    val themeMode: StateFlow<ThemeMode> = _themeMode.asStateFlow()
+
+    private val _displayMode = MutableStateFlow(LyricDisplayMode.DUAL)
+    val displayMode: StateFlow<LyricDisplayMode> = _displayMode.asStateFlow()
+
+    private val _wifiOnlyDownload = MutableStateFlow(false)
+    val wifiOnlyDownload: StateFlow<Boolean> = _wifiOnlyDownload.asStateFlow()
+
+    private val _overlayConfig = MutableStateFlow(OverlayConfig())
+    val overlayConfig: StateFlow<OverlayConfig> = _overlayConfig.asStateFlow()
 
     private val _lyricsState = MutableStateFlow(LyricsState(targetLang = defaultTargetLang))
     val lyricsState: StateFlow<LyricsState> = _lyricsState.asStateFlow()
@@ -32,6 +52,28 @@ object MediaStateBus {
 
     private val _isOverlayActive = MutableStateFlow(false)
     val isOverlayActive: StateFlow<Boolean> = _isOverlayActive.asStateFlow()
+
+    // Transport control hooks populated by MediaNotificationListenerService
+    var onPlayPauseToggle: (() -> Unit)? = null
+    var onSeekToMs: ((Long) -> Unit)? = null
+    var onSkipNext: (() -> Unit)? = null
+    var onSkipPrevious: (() -> Unit)? = null
+
+    fun init(context: Context) {
+        if (prefs != null) return
+        synchronized(this) {
+            if (prefs != null) return
+            val appPrefs = AppPrefs(context)
+            prefs = appPrefs
+            val savedLang = appPrefs.targetLang
+            _targetLanguage.value = savedLang
+            _themeMode.value = appPrefs.themeMode
+            _displayMode.value = appPrefs.displayMode
+            _wifiOnlyDownload.value = appPrefs.wifiOnlyDownload
+            _overlayConfig.value = appPrefs.getOverlayConfig()
+            _lyricsState.value = _lyricsState.value.copy(targetLang = savedLang)
+        }
+    }
 
     fun updateTrackState(newState: MediaTrackState) {
         _trackState.value = newState
@@ -46,6 +88,14 @@ object MediaStateBus {
         }
     }
 
+    fun clearTrackIfSessionEnded() {
+        if (!_trackState.value.isManualOverride) {
+            _trackState.value = MediaTrackState()
+            _lyricsState.value = LyricsState(targetLang = _targetLanguage.value)
+            _activeLineIndex.value = -1
+        }
+    }
+
     fun updateLyricsState(newState: LyricsState) {
         _lyricsState.value = newState
         recalculateActiveLine(_trackState.value.positionMs)
@@ -53,6 +103,38 @@ object MediaStateBus {
 
     fun setTargetLanguage(langCode: String) {
         _targetLanguage.value = langCode
+        prefs?.targetLang = langCode
+    }
+
+    fun setThemeMode(mode: ThemeMode) {
+        _themeMode.value = mode
+        prefs?.themeMode = mode
+    }
+
+    fun setDisplayMode(mode: LyricDisplayMode) {
+        _displayMode.value = mode
+        prefs?.displayMode = mode
+    }
+
+    fun setWifiOnlyDownload(wifiOnly: Boolean) {
+        _wifiOnlyDownload.value = wifiOnly
+        prefs?.wifiOnlyDownload = wifiOnly
+    }
+
+    fun updateOverlayConfig(config: OverlayConfig) {
+        _overlayConfig.value = config
+        prefs?.saveOverlayConfig(config)
+    }
+
+    fun updateOverlayPosition(x: Int, y: Int) {
+        val updated = _overlayConfig.value.copy(x = x, y = y.coerceAtLeast(0))
+        _overlayConfig.value = updated
+        prefs?.saveOverlayConfig(updated)
+    }
+
+    fun toggleOverlayTouchLock() {
+        val current = _overlayConfig.value
+        _overlayConfig.value = current.copy(isTouchLocked = !current.isTouchLocked)
     }
 
     fun setOverlayActive(active: Boolean) {
