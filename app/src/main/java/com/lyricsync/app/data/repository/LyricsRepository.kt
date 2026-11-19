@@ -11,6 +11,7 @@ import com.google.mlkit.nl.translate.TranslateRemoteModel
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 import com.lyricsync.app.data.local.CachedLyricsEntity
+import com.lyricsync.app.data.local.CachedSongSummary
 import com.lyricsync.app.data.local.LyricsDatabase
 import com.lyricsync.app.data.remote.CloudTranslator
 import com.lyricsync.app.data.remote.LrcLibApi
@@ -342,6 +343,42 @@ class LyricsRepository(context: Context) {
         safeCatching { dao.count() }.getOrDefault(0)
     }
 
+    suspend fun getLibrarySummaries(): List<CachedSongSummary> = withContext(Dispatchers.IO) {
+        safeCatching { dao.getRecentSummaries(100) }.getOrDefault(emptyList())
+    }
+
+    suspend fun toggleFavorite(cacheKey: String, isFavorite: Boolean) = withContext(Dispatchers.IO) {
+        safeCatching { dao.setFavorite(cacheKey, isFavorite) }
+    }
+
+    suspend fun loadCachedSongByKey(cacheKey: String) = withContext(Dispatchers.IO) {
+        val entity = safeCatching { dao.getByKey(cacheKey) }.getOrNull() ?: return@withContext
+        val cachedLines: List<LyricLine> = safeCatching {
+            gson.fromJson<List<LyricLine>>(entity.linesJson, lineListType)
+        }.getOrDefault(emptyList())
+        if (cachedLines.isEmpty()) return@withContext
+
+        safeCatching { dao.touch(cacheKey) }
+        val manualTrack = MediaTrackState(
+            trackName = entity.trackName,
+            artistName = entity.artistName,
+            isPlaying = false,
+            isManualOverride = true
+        )
+        MediaStateBus.updateTrackState(manualTrack)
+        MediaStateBus.updateLyricsState(
+            LyricsState(
+                trackId = manualTrack.trackId,
+                lines = cachedLines,
+                isSynced = entity.isSynced,
+                sourceLang = entity.sourceLang,
+                targetLang = entity.targetLang,
+                isLoading = false,
+                isFromCache = true
+            )
+        )
+    }
+
     suspend fun clearCache() = withContext(Dispatchers.IO) {
         safeCatching { dao.clearAll() }
     }
@@ -447,6 +484,7 @@ class LyricsRepository(context: Context) {
         lines: List<LyricLine>
     ) {
         safeCatching {
+            val existingFav = dao.getByKey(cacheKey)?.isFavorite ?: false
             dao.insert(
                 CachedLyricsEntity(
                     cacheKey = cacheKey,
@@ -455,7 +493,8 @@ class LyricsRepository(context: Context) {
                     sourceLang = sourceLang,
                     targetLang = targetLang,
                     isSynced = isSynced,
-                    linesJson = gson.toJson(lines)
+                    linesJson = gson.toJson(lines),
+                    isFavorite = existingFav
                 )
             )
             dao.pruneLeastRecentlyUsed(maxEntries = 500)

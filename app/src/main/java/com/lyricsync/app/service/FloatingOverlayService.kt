@@ -322,10 +322,26 @@ private fun FloatingSubtitleOverlayContent(
     val activeIndex by MediaStateBus.activeLineIndex.collectAsState()
     val overlayConfig by MediaStateBus.overlayConfig.collectAsState()
     val displayMode by MediaStateBus.displayMode.collectAsState()
+    val autoHideOnPause by MediaStateBus.autoHideOverlayOnPause.collectAsState()
     var isCollapsed by remember { mutableStateOf(false) }
+    var isAutoHidden by remember { mutableStateOf(false) }
+
+    LaunchedEffect(trackState.isPlaying, trackState.hasActiveTrack, autoHideOnPause) {
+        if (autoHideOnPause && trackState.hasActiveTrack && !trackState.isPlaying) {
+            kotlinx.coroutines.delay(3500L)
+            isAutoHidden = true
+        } else {
+            isAutoHidden = false
+        }
+    }
 
     LaunchedEffect(overlayConfig.isTouchLocked) {
         onTouchLockChanged(overlayConfig.isTouchLocked)
+    }
+
+    if (isAutoHidden) {
+        Box(modifier = Modifier.size(0.dp))
+        return
     }
 
     val activeLine = remember(lyricsState.lines, activeIndex) {

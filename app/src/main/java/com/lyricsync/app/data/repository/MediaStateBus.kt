@@ -4,6 +4,7 @@ import android.content.Context
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.lyricsync.app.data.local.AppPrefs
 import com.lyricsync.app.domain.LrcParser
+import com.lyricsync.app.domain.LoopRange
 import com.lyricsync.app.domain.LyricDisplayMode
 import com.lyricsync.app.domain.LyricsState
 import com.lyricsync.app.domain.MediaTrackState
@@ -49,6 +50,12 @@ object MediaStateBus {
     private val _keepScreenOn = MutableStateFlow(false)
     val keepScreenOn: StateFlow<Boolean> = _keepScreenOn.asStateFlow()
 
+    private val _autoHideOverlayOnPause = MutableStateFlow(true)
+    val autoHideOverlayOnPause: StateFlow<Boolean> = _autoHideOverlayOnPause.asStateFlow()
+
+    private val _loopRange = MutableStateFlow<LoopRange?>(null)
+    val loopRange: StateFlow<LoopRange?> = _loopRange.asStateFlow()
+
     private val _overlayConfig = MutableStateFlow(OverlayConfig())
     val overlayConfig: StateFlow<OverlayConfig> = _overlayConfig.asStateFlow()
 
@@ -80,12 +87,16 @@ object MediaStateBus {
             _translationEngine.value = appPrefs.translationEngine
             _wifiOnlyDownload.value = appPrefs.wifiOnlyDownload
             _keepScreenOn.value = appPrefs.keepScreenOn
+            _autoHideOverlayOnPause.value = appPrefs.autoHideOverlayOnPause
             _overlayConfig.value = appPrefs.getOverlayConfig()
             _lyricsState.value = _lyricsState.value.copy(targetLang = savedLang)
         }
     }
 
     fun updateTrackState(newState: MediaTrackState) {
+        if (newState.trackId != _trackState.value.trackId) {
+            _loopRange.value = null
+        }
         _trackState.value = newState
         recalculateActiveLine(newState.positionMs)
     }
@@ -148,6 +159,15 @@ object MediaStateBus {
     fun setKeepScreenOn(enabled: Boolean) {
         _keepScreenOn.value = enabled
         prefs?.keepScreenOn = enabled
+    }
+
+    fun setAutoHideOverlayOnPause(enabled: Boolean) {
+        _autoHideOverlayOnPause.value = enabled
+        prefs?.autoHideOverlayOnPause = enabled
+    }
+
+    fun setLoopRange(range: LoopRange?) {
+        _loopRange.value = range
     }
 
     fun updateOverlayConfig(config: OverlayConfig) {

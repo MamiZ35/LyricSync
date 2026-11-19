@@ -257,7 +257,17 @@ class MediaNotificationListenerService : NotificationListenerService() {
                 if (controller != null && state != null) {
                     val isPlaying = state.state == PlaybackState.STATE_PLAYING
                     val duration = MediaStateBus.trackState.value.durationMs
-                    val pos = computeCurrentPosition(state, duration)
+                    var pos = computeCurrentPosition(state, duration)
+
+                    // A-B / Stanza loop practice mode: seek back to startTimeMs at endTimeMs
+                    val activeLoop = MediaStateBus.loopRange.value
+                    if (isPlaying && activeLoop != null && pos >= activeLoop.endTimeMs) {
+                        lastUserSeekElapsedRealtime = SystemClock.elapsedRealtime()
+                        lastUserSeekPositionMs = activeLoop.startTimeMs
+                        controller.transportControls.seekTo(activeLoop.startTimeMs)
+                        pos = activeLoop.startTimeMs
+                    }
+
                     MediaStateBus.updatePosition(pos, isPlaying)
                     if (!isPlaying) {
                         idleTicks++

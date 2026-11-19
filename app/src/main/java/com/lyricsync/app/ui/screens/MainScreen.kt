@@ -45,18 +45,23 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.NightsStay
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SettingsBrightness
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Tune
@@ -103,9 +108,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.lyricsync.app.BuildConfig
+import com.lyricsync.app.data.local.CachedSongSummary
 import com.lyricsync.app.data.remote.LrcLibResponse
 import com.lyricsync.app.data.remote.ReleaseInfo
 import com.lyricsync.app.data.remote.UpdateChecker
+import com.lyricsync.app.domain.LoopRange
 import com.lyricsync.app.domain.LyricDisplayMode
 import com.lyricsync.app.domain.LyricLine
 import com.lyricsync.app.domain.LyricsState
@@ -143,9 +150,13 @@ fun MainScreen(
     overlayConfig: OverlayConfig,
     wifiOnlyDownload: Boolean,
     keepScreenOn: Boolean,
+    autoHideOverlayOnPause: Boolean,
+    loopRange: LoopRange?,
     onOpenPermissions: () -> Unit,
     onToggleTheme: () -> Unit,
     onToggleKeepScreenOn: () -> Unit,
+    onSetAutoHideOverlayOnPause: (Boolean) -> Unit,
+    onSetLoopRange: (LoopRange?) -> Unit,
     onSelectTargetLanguage: (String) -> Unit,
     onSelectDisplayMode: (LyricDisplayMode) -> Unit,
     onSelectTranslationEngine: (TranslationEngine) -> Unit,
@@ -162,6 +173,9 @@ fun MainScreen(
     onLoadCacheAndModels: suspend () -> Pair<Int, List<String>>,
     onClearCache: suspend () -> Unit,
     onDeleteModel: suspend (String) -> Unit,
+    onLoadLibrarySummaries: suspend () -> List<CachedSongSummary>,
+    onToggleFavorite: suspend (String, Boolean) -> Unit,
+    onSelectCachedSong: (String) -> Unit,
     onCopyLine: (LyricLine) -> Unit,
     onShareLine: (LyricLine) -> Unit,
     onShareImageCard: (LyricLine) -> Unit,
@@ -171,11 +185,12 @@ fun MainScreen(
 ) {
     val listState = rememberLazyListState()
     var showSearchDialog by remember { mutableStateOf(false) }
+    var showLibraryDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
     var isAmbientFullscreen by rememberSaveable { mutableStateOf(false) }
     var isAutoScrollPaused by remember { mutableStateOf(false) }
     var isProgrammaticScroll by remember { mutableStateOf(false) }
-    var selectedLineForActions by remember { mutableStateOf<LyricLine?>(null) }
+    var selectedLineIndexForActions by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(lyricsState.trackId) {
         isAutoScrollPaused = false
@@ -318,6 +333,7 @@ fun MainScreen(
                     onSelectDisplayMode = onSelectDisplayMode,
                     onToggleOverlay = onToggleOverlay,
                     onOpenSearch = { showSearchDialog = true },
+                    onOpenLibrary = { showLibraryDialog = true },
                     onOpenSettings = { showSettingsDialog = true },
                     onRetryLyrics = onRetryLyrics
                 )
@@ -370,6 +386,78 @@ fun MainScreen(
                 StatusBanner(
                     message = lyricsState.statusMessage,
                     isDownloading = lyricsState.isDownloadingModel
+                )
+            }
+
+            // Feature 9: Active A-B / Stanza Loop Banner
+            if (loopRange != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFFF59E0B).copy(alpha = 0.16f))
+                        .border(1.dp, Color(0xFFF59E0B).copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(
+                            imageVector = Icons.Default.Repeat,
+                            contentDescription = null,
+                            tint = Color(0xFFF59E0B),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Kıta Döngüsü (Satır ${loopRange.startLineIndex + 1}–${loopRange.endLineIndex + 1})",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    TextButton(
+                        onClick = { onSetLoopRange(null) },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                    ) {
+                        Text("Kapat", fontSize = 11.sp, color = Color(0xFFF59E0B), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            // Feature W1: Instrumental / Intro Countdown Bar
+            val instrumentalGap = remember(
+                lyricsState.isSynced,
+                lyricsState.lines,
+                activeLineIndex,
+                trackState.positionMs,
+                trackState.isManualOverride
+            ) {
+                if (!lyricsState.isSynced || lyricsState.lines.isEmpty() || trackState.isManualOverride) {
+                    null
+                } else if (activeLineIndex == -1 && lyricsState.lines[0].timeMs >= 3000L) {
+                    val nextTime = lyricsState.lines[0].timeMs
+                    val remaining = (nextTime - trackState.positionMs).coerceAtLeast(0L)
+                    if (remaining >= 1000L) Pair(remaining, nextTime) else null
+                } else if (activeLineIndex in 0 until lyricsState.lines.lastIndex) {
+                    val curTime = lyricsState.lines[activeLineIndex].timeMs
+                    val nextTime = lyricsState.lines[activeLineIndex + 1].timeMs
+                    val gap = nextTime - curTime
+                    if (gap >= 8000L) {
+                        val remaining = (nextTime - trackState.positionMs).coerceAtLeast(0L)
+                        if (remaining >= 1000L) Pair(remaining, gap) else null
+                    } else {
+                        null
+                    }
+                } else {
+                    null
+                }
+            }
+            if (instrumentalGap != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                InstrumentalCountdownBanner(
+                    remainingMs = instrumentalGap.first,
+                    totalGapMs = instrumentalGap.second
                 )
             }
 
@@ -439,18 +527,21 @@ fun MainScreen(
                             ) { index, line ->
                                 val isActive = lyricsState.isSynced && index == activeLineIndex
                                 val isPast = lyricsState.isSynced && activeLineIndex > index
+                                val isInLoop = loopRange != null &&
+                                    index in loopRange.startLineIndex..loopRange.endLineIndex
                                 val canSeek = lyricsState.isSynced && !trackState.isManualOverride
                                 LyricLineRow(
                                     line = line,
                                     displayMode = displayMode,
                                     isActive = isActive,
                                     isPast = isPast,
+                                    isInLoop = isInLoop,
                                     isSynced = lyricsState.isSynced,
                                     canSeek = canSeek,
                                     onSeek = { onSeekToMs(line.timeMs) },
                                     onLongPress = {
                                         onCopyLine(line)
-                                        selectedLineForActions = line
+                                        selectedLineIndexForActions = index
                                     }
                                 )
                             }
@@ -488,80 +579,108 @@ fun MainScreen(
         }
     }
 
-    selectedLineForActions?.let { line ->
-        AlertDialog(
-            onDismissRequest = { selectedLineForActions = null },
-            title = { Text("Söz İşlemleri", fontWeight = FontWeight.Bold) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = line.originalText,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 15.sp
-                    )
-                    if (line.translatedText.isNotBlank() && line.translatedText != line.originalText) {
+    selectedLineIndexForActions?.let { selectedIdx ->
+        val line = lyricsState.lines.getOrNull(selectedIdx)
+        if (line != null) {
+            AlertDialog(
+                onDismissRequest = { selectedLineIndexForActions = null },
+                title = { Text("Söz İşlemleri", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
-                            text = line.translatedText,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontSize = 14.sp
+                            text = line.originalText,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 15.sp
                         )
-                    }
-                    Text(
-                        text = "Panoya kopyalandı ✓",
-                        fontSize = 12.sp,
-                        color = Color(0xFF10B981)
-                    )
+                        if (line.translatedText.isNotBlank() && line.translatedText != line.originalText) {
+                            Text(
+                                text = line.translatedText,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 14.sp
+                            )
+                        }
+                        Text(
+                            text = "Panoya kopyalandı ✓",
+                            fontSize = 12.sp,
+                            color = Color(0xFF10B981)
+                        )
 
-                    Button(
-                        onClick = {
-                            onShareImageCard(line)
-                            selectedLineForActions = null
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(17.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Görsel Kart Paylaş (PNG)")
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
+                        Button(
                             onClick = {
-                                onCopyLine(line)
-                                selectedLineForActions = null
+                                onShareImageCard(line)
+                                selectedLineIndexForActions = null
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp)
                         ) {
-                            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Kopyala", fontSize = 12.sp)
+                            Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(17.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Görsel Kart Paylaş (PNG)")
                         }
-                        OutlinedButton(
-                            onClick = {
-                                onShareLine(line)
-                                selectedLineForActions = null
-                            },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
+
+                        if (lyricsState.isSynced && !trackState.isManualOverride) {
+                            OutlinedButton(
+                                onClick = {
+                                    val endIdx = (selectedIdx + 3).coerceAtMost(lyricsState.lines.lastIndex)
+                                    val startMs = lyricsState.lines[selectedIdx].timeMs
+                                    val rawEndMs = if (endIdx + 1 < lyricsState.lines.size) {
+                                        lyricsState.lines[endIdx + 1].timeMs
+                                    } else {
+                                        val fallback = lyricsState.lines[endIdx].timeMs + 12_000L
+                                        if (trackState.durationMs > 0L) fallback.coerceAtMost(trackState.durationMs) else fallback
+                                    }
+                                    val safeEndMs = maxOf(rawEndMs, startMs + 4000L)
+                                    onSetLoopRange(LoopRange(selectedIdx, endIdx, startMs, safeEndMs))
+                                    onSeekToMs(startMs)
+                                    selectedLineIndexForActions = null
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.Repeat, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Bu Kıta İçin Döngü Başlat (4 Satır)", fontSize = 12.sp)
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Metin Paylaş", fontSize = 12.sp)
+                            OutlinedButton(
+                                onClick = {
+                                    onCopyLine(line)
+                                    selectedLineIndexForActions = null
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Kopyala", fontSize = 12.sp)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    onShareLine(line)
+                                    selectedLineIndexForActions = null
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Metin Paylaş", fontSize = 12.sp)
+                            }
                         }
                     }
+                },
+                confirmButton = {
+                    TextButton(onClick = { selectedLineIndexForActions = null }) {
+                        Text("Kapat")
+                    }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { selectedLineForActions = null }) {
-                    Text("Kapat")
-                }
-            }
-        )
+            )
+        }
     }
 
     if (showSearchDialog) {
@@ -576,14 +695,28 @@ fun MainScreen(
         )
     }
 
+    if (showLibraryDialog) {
+        LibraryAndStatsDialog(
+            onLoadSummaries = onLoadLibrarySummaries,
+            onToggleFavorite = onToggleFavorite,
+            onSelectSong = { cacheKey ->
+                showLibraryDialog = false
+                onSelectCachedSong(cacheKey)
+            },
+            onDismiss = { showLibraryDialog = false }
+        )
+    }
+
     if (showSettingsDialog) {
         SettingsAndModelsDialog(
             overlayConfig = overlayConfig,
             translationEngine = translationEngine,
             wifiOnlyDownload = wifiOnlyDownload,
+            autoHideOverlayOnPause = autoHideOverlayOnPause,
             onUpdateOverlayConfig = onUpdateOverlayConfig,
             onSelectTranslationEngine = onSelectTranslationEngine,
             onSetWifiOnlyDownload = onSetWifiOnlyDownload,
+            onSetAutoHideOverlayOnPause = onSetAutoHideOverlayOnPause,
             onLoadCacheAndModels = onLoadCacheAndModels,
             onClearCache = onClearCache,
             onDeleteModel = onDeleteModel,
@@ -609,6 +742,7 @@ private fun TopHeaderBar(
     onSelectDisplayMode: (LyricDisplayMode) -> Unit,
     onToggleOverlay: () -> Unit,
     onOpenSearch: () -> Unit,
+    onOpenLibrary: () -> Unit,
     onOpenSettings: () -> Unit,
     onRetryLyrics: () -> Unit
 ) {
@@ -653,6 +787,13 @@ private fun TopHeaderBar(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                IconButton(onClick = onOpenLibrary) {
+                    Icon(
+                        imageVector = Icons.Default.LibraryMusic,
+                        contentDescription = "Kütüphane & İstatistik",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 IconButton(onClick = onOpenSettings) {
                     Icon(
                         imageVector = Icons.Default.Tune,
@@ -671,11 +812,12 @@ private fun TopHeaderBar(
                     val icon = when (themeMode) {
                         ThemeMode.SYSTEM -> Icons.Default.SettingsBrightness
                         ThemeMode.DARK -> Icons.Default.DarkMode
+                        ThemeMode.AMOLED -> Icons.Default.NightsStay
                         ThemeMode.LIGHT -> Icons.Default.LightMode
                     }
                     Icon(
                         imageVector = icon,
-                        contentDescription = "Tema Değiştir",
+                        contentDescription = "Tema: ${themeMode.label}",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -1073,6 +1215,57 @@ private fun NowPlayingCard(
 }
 
 @Composable
+private fun InstrumentalCountdownBanner(
+    remainingMs: Long,
+    totalGapMs: Long
+) {
+    val remainingSec = ((remainingMs + 999L) / 1000L).coerceAtLeast(1L)
+    val progress = (1f - (remainingMs.toFloat() / totalGapMs.coerceAtLeast(1L).toFloat())).coerceIn(0f, 1f)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+                RoundedCornerShape(14.dp)
+            )
+            .padding(horizontal = 14.dp, vertical = 9.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "🎸 Enstrümantal Ara",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = "Sonraki söze $remainingSec sn",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        LinearProgressIndicator(
+            progress = { progress },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp)),
+            color = MaterialTheme.colorScheme.primary,
+            trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+        )
+    }
+}
+
+@Composable
 private fun StatusBanner(
     message: String,
     isDownloading: Boolean
@@ -1121,6 +1314,7 @@ private fun LyricLineRow(
     displayMode: LyricDisplayMode,
     isActive: Boolean,
     isPast: Boolean,
+    isInLoop: Boolean,
     isSynced: Boolean,
     canSeek: Boolean,
     onSeek: () -> Unit,
@@ -1132,10 +1326,10 @@ private fun LyricLineRow(
         label = "LyricScale"
     )
     val bgColor by animateColorAsState(
-        targetValue = if (isActive) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-        } else {
-            Color.Transparent
+        targetValue = when {
+            isActive -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+            isInLoop -> Color(0xFFF59E0B).copy(alpha = 0.08f)
+            else -> Color.Transparent
         },
         animationSpec = tween(durationMillis = 240),
         label = "LyricBg"
@@ -1175,14 +1369,18 @@ private fun LyricLineRow(
             .clip(RoundedCornerShape(18.dp))
             .background(bgColor)
             .then(
-                if (isActive) {
-                    Modifier.border(
+                when {
+                    isActive -> Modifier.border(
                         width = 1.dp,
                         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
                         shape = RoundedCornerShape(18.dp)
                     )
-                } else {
-                    Modifier
+                    isInLoop -> Modifier.border(
+                        width = 1.dp,
+                        color = Color(0xFFF59E0B).copy(alpha = 0.45f),
+                        shape = RoundedCornerShape(18.dp)
+                    )
+                    else -> Modifier
                 }
             )
             .combinedClickable(
@@ -1356,13 +1554,239 @@ private fun ManualSearchDialog(
 }
 
 @Composable
+private fun LibraryAndStatsDialog(
+    onLoadSummaries: suspend () -> List<CachedSongSummary>,
+    onToggleFavorite: suspend (String, Boolean) -> Unit,
+    onSelectSong: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var summaries by remember { mutableStateOf<List<CachedSongSummary>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var favoritesOnly by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    fun reload() {
+        scope.launch {
+            isLoading = true
+            summaries = onLoadSummaries()
+            isLoading = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        reload()
+    }
+
+    val favoriteCount = remember(summaries) { summaries.count { it.isFavorite } }
+    val topLanguages = remember(summaries) {
+        summaries
+            .groupingBy { it.sourceLang.ifBlank { "?" }.uppercase() }
+            .eachCount()
+            .entries
+            .sortedByDescending { it.value }
+            .take(4)
+            .joinToString(" • ") { "${it.key} (${it.value})" }
+    }
+    val topArtists = remember(summaries) {
+        summaries
+            .filter { it.artistName.isNotBlank() }
+            .groupingBy { it.artistName }
+            .eachCount()
+            .entries
+            .sortedByDescending { it.value }
+            .take(3)
+            .joinToString(", ") { "${it.key} (${it.value})" }
+    }
+    val displayed = remember(summaries, favoritesOnly) {
+        if (favoritesOnly) summaries.filter { it.isFavorite } else summaries
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(text = "Kütüphane & LyricSync Özeti", fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Feature 22: Listening & Translation Stats Summary Card
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Çevrilen: ${summaries.size} şarkı",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "⭐ Favori: $favoriteCount",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFF59E0B)
+                        )
+                    }
+                    if (topLanguages.isNotBlank()) {
+                        Text(
+                            text = "Diller: $topLanguages",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (topArtists.isNotBlank()) {
+                        Text(
+                            text = "Sanatçılar: $topArtists",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                // Filter tabs: All / Favorites
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val allSelected = !favoritesOnly
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (allSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { favoritesOnly = false }
+                    ) {
+                        Text(
+                            text = "Tümü (${summaries.size})",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (allSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (!allSelected) Color(0xFFF59E0B) else MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { favoritesOnly = true }
+                    ) {
+                        Text(
+                            text = "⭐ Favoriler ($favoriteCount)",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (!allSelected) Color.Black else MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    }
+                }
+
+                when {
+                    isLoading -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(120.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                    displayed.isEmpty() -> {
+                        Text(
+                            text = if (favoritesOnly) "Henüz favori şarkınız yok." else "Henüz çevrilmiş şarkı bulunmuyor.",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 16.dp)
+                        )
+                    }
+                    else -> {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 260.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(displayed, key = { it.cacheKey }) { item ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                                        .clickable { onSelectSong(item.cacheKey) }
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = item.trackName,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = "${item.artistName} • ${item.sourceLang.uppercase()} → ${item.targetLang.uppercase()}",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            scope.launch {
+                                                onToggleFavorite(item.cacheKey, !item.isFavorite)
+                                                reload()
+                                            }
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (item.isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
+                                            contentDescription = "Favori",
+                                            tint = if (item.isFavorite) Color(0xFFF59E0B) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Kapat") }
+        }
+    )
+}
+
+@Composable
 private fun SettingsAndModelsDialog(
     overlayConfig: OverlayConfig,
     translationEngine: TranslationEngine,
     wifiOnlyDownload: Boolean,
+    autoHideOverlayOnPause: Boolean,
     onUpdateOverlayConfig: (OverlayConfig) -> Unit,
     onSelectTranslationEngine: (TranslationEngine) -> Unit,
     onSetWifiOnlyDownload: (Boolean) -> Unit,
+    onSetAutoHideOverlayOnPause: (Boolean) -> Unit,
     onLoadCacheAndModels: suspend () -> Pair<Int, List<String>>,
     onClearCache: suspend () -> Unit,
     onDeleteModel: suspend (String) -> Unit,
@@ -1456,6 +1880,25 @@ private fun SettingsAndModelsDialog(
                         onCheckedChange = { locked ->
                             onUpdateOverlayConfig(overlayConfig.copy(isTouchLocked = locked))
                         }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "Müzik Durunca Otomatik Gizle", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = "Şarkı duraklatılınca 3.5 sn sonra altyazıyı gizler, çalınca geri getirir.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = autoHideOverlayOnPause,
+                        onCheckedChange = onSetAutoHideOverlayOnPause
                     )
                 }
 

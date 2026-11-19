@@ -43,6 +43,10 @@ class AppPrefs(context: Context) {
         get() = prefs.getBoolean(KEY_KEEP_SCREEN_ON, false)
         set(value) = prefs.edit().putBoolean(KEY_KEEP_SCREEN_ON, value).apply()
 
+    var autoHideOverlayOnPause: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_HIDE_OVERLAY, true)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_HIDE_OVERLAY, value).apply()
+
     var translationEngine: TranslationEngine
         get() = runCatching {
             TranslationEngine.valueOf(
@@ -75,6 +79,7 @@ class AppPrefs(context: Context) {
         const val KEY_DISPLAY_MODE = "display_mode"
         const val KEY_WIFI_ONLY = "wifi_only_download"
         const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
+        const val KEY_AUTO_HIDE_OVERLAY = "auto_hide_overlay_on_pause"
         const val KEY_TRANSLATION_ENGINE = "translation_engine"
         const val KEY_OVERLAY_FONT_SIZE = "overlay_font_size"
         const val KEY_OVERLAY_OPACITY = "overlay_opacity"

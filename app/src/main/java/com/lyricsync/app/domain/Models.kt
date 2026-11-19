@@ -36,9 +36,19 @@ data class LyricsState(
     val errorMessage: String? = null
 )
 
-enum class ThemeMode {
-    SYSTEM, DARK, LIGHT
+enum class ThemeMode(val label: String) {
+    SYSTEM("Sistem"),
+    DARK("Koyu"),
+    AMOLED("Saf Siyah (OLED)"),
+    LIGHT("Açık")
 }
+
+data class LoopRange(
+    val startLineIndex: Int,
+    val endLineIndex: Int,
+    val startTimeMs: Long,
+    val endTimeMs: Long
+)
 
 enum class LyricDisplayMode(val label: String) {
     DUAL("Çift Dil"),

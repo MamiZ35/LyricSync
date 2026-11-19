@@ -21,6 +21,19 @@ private val DarkPalette = darkColorScheme(
     onSurfaceVariant = Color(0xFF94A3B8)
 )
 
+private val AmoledPalette = darkColorScheme(
+    primary = Color(0xFF38BDF8),
+    secondary = Color(0xFF818CF8),
+    tertiary = Color(0xFF34D399),
+    background = Color(0xFF000000),
+    surface = Color(0xFF0A0E17),
+    surfaceVariant = Color(0xFF141C2B),
+    onPrimary = Color.Black,
+    onBackground = Color.White,
+    onSurface = Color(0xFFF1F5F9),
+    onSurfaceVariant = Color(0xFF94A3B8)
+)
+
 private val LightPalette = lightColorScheme(
     primary = Color(0xFF0284C7),
     secondary = Color(0xFF4F46E5),
@@ -39,13 +52,14 @@ fun LyricSyncTheme(
     themeMode: ThemeMode,
     content: @Composable () -> Unit
 ) {
-    val useDark = when (themeMode) {
-        ThemeMode.SYSTEM -> isSystemInDarkTheme()
-        ThemeMode.DARK -> true
-        ThemeMode.LIGHT -> false
+    val palette = when (themeMode) {
+        ThemeMode.SYSTEM -> if (isSystemInDarkTheme()) DarkPalette else LightPalette
+        ThemeMode.DARK -> DarkPalette
+        ThemeMode.AMOLED -> AmoledPalette
+        ThemeMode.LIGHT -> LightPalette
     }
     MaterialTheme(
-        colorScheme = if (useDark) DarkPalette else LightPalette,
+        colorScheme = palette,
         content = content
     )
 }

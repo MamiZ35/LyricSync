@@ -1,6 +1,7 @@
 package com.lyricsync.app.data.local
 
 import android.content.Context
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -29,7 +30,9 @@ data class CachedLyricsEntity(
     val targetLang: String,
     val isSynced: Boolean,
     val linesJson: String,
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "0")
+    val isFavorite: Boolean = false
 )
 
 data class CachedSongSummary(
@@ -39,7 +42,8 @@ data class CachedSongSummary(
     val sourceLang: String,
     val targetLang: String,
     val isSynced: Boolean,
-    val updatedAt: Long
+    val updatedAt: Long,
+    val isFavorite: Boolean
 )
 
 @Dao
@@ -61,17 +65,20 @@ interface LyricsDao {
     @Query("UPDATE cached_lyrics SET updatedAt = :timestamp WHERE cacheKey = :cacheKey")
     suspend fun touch(cacheKey: String, timestamp: Long = System.currentTimeMillis())
 
+    @Query("UPDATE cached_lyrics SET isFavorite = :isFavorite WHERE cacheKey = :cacheKey")
+    suspend fun setFavorite(cacheKey: String, isFavorite: Boolean)
+
     @Query(
-        "SELECT cacheKey, artistName, trackName, sourceLang, targetLang, isSynced, updatedAt " +
-            "FROM cached_lyrics ORDER BY updatedAt DESC LIMIT :limit"
+        "SELECT cacheKey, artistName, trackName, sourceLang, targetLang, isSynced, updatedAt, isFavorite " +
+            "FROM cached_lyrics ORDER BY isFavorite DESC, updatedAt DESC LIMIT :limit"
     )
-    suspend fun getRecentSummaries(limit: Int = 50): List<CachedSongSummary>
+    suspend fun getRecentSummaries(limit: Int = 100): List<CachedSongSummary>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: CachedLyricsEntity)
 
     @Query(
-        "DELETE FROM cached_lyrics WHERE cacheKey NOT IN " +
+        "DELETE FROM cached_lyrics WHERE isFavorite = 0 AND cacheKey NOT IN " +
             "(SELECT cacheKey FROM cached_lyrics ORDER BY updatedAt DESC LIMIT :maxEntries)"
     )
     suspend fun pruneLeastRecentlyUsed(maxEntries: Int = 500)
@@ -83,7 +90,7 @@ interface LyricsDao {
     suspend fun clearAll()
 }
 
-@Database(entities = [CachedLyricsEntity::class], version = 2, exportSchema = false)
+@Database(entities = [CachedLyricsEntity::class], version = 3, exportSchema = false)
 abstract class LyricsDatabase : RoomDatabase() {
     abstract fun lyricsDao(): LyricsDao
 
@@ -104,6 +111,14 @@ abstract class LyricsDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `cached_lyrics` ADD COLUMN `isFavorite` INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
         fun getInstance(context: Context): LyricsDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -112,7 +127,7 @@ abstract class LyricsDatabase : RoomDatabase() {
                     "lyrics_cache.db"
                 )
                     .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .build()
                     .also { INSTANCE = it }

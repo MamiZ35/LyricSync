@@ -131,6 +131,8 @@ class MainActivity : ComponentActivity() {
             val overlayConfig by MediaStateBus.overlayConfig.collectAsState()
             val wifiOnlyDownload by MediaStateBus.wifiOnlyDownload.collectAsState()
             val keepScreenOn by MediaStateBus.keepScreenOn.collectAsState()
+            val autoHideOverlayOnPause by MediaStateBus.autoHideOverlayOnPause.collectAsState()
+            val loopRange by MediaStateBus.loopRange.collectAsState()
             val coroutineScope = rememberCoroutineScope()
             var activeTranslationJob by remember { mutableStateOf<Job?>(null) }
 
@@ -173,19 +175,29 @@ class MainActivity : ComponentActivity() {
                         overlayConfig = overlayConfig,
                         wifiOnlyDownload = wifiOnlyDownload,
                         keepScreenOn = keepScreenOn,
+                        autoHideOverlayOnPause = autoHideOverlayOnPause,
+                        loopRange = loopRange,
                         onOpenPermissions = {
                             onboardingCompleted = false
                         },
                         onToggleTheme = {
                             val nextTheme = when (themeMode) {
-                                ThemeMode.DARK -> ThemeMode.LIGHT
+                                ThemeMode.DARK -> ThemeMode.AMOLED
+                                ThemeMode.AMOLED -> ThemeMode.LIGHT
                                 ThemeMode.LIGHT -> ThemeMode.SYSTEM
                                 ThemeMode.SYSTEM -> ThemeMode.DARK
                             }
                             MediaStateBus.setThemeMode(nextTheme)
+                            Toast.makeText(this, "Tema: ${nextTheme.label}", Toast.LENGTH_SHORT).show()
                         },
                         onToggleKeepScreenOn = {
                             MediaStateBus.setKeepScreenOn(!keepScreenOn)
+                        },
+                        onSetAutoHideOverlayOnPause = { enabled ->
+                            MediaStateBus.setAutoHideOverlayOnPause(enabled)
+                        },
+                        onSetLoopRange = { range ->
+                            MediaStateBus.setLoopRange(range)
                         },
                         onSelectTargetLanguage = { langCode ->
                             MediaStateBus.setTargetLanguage(langCode)
@@ -270,6 +282,18 @@ class MainActivity : ComponentActivity() {
                         },
                         onDeleteModel = { langCode ->
                             repository.deleteModel(langCode)
+                        },
+                        onLoadLibrarySummaries = {
+                            repository.getLibrarySummaries()
+                        },
+                        onToggleFavorite = { cacheKey, isFav ->
+                            repository.toggleFavorite(cacheKey, isFav)
+                        },
+                        onSelectCachedSong = { cacheKey ->
+                            activeTranslationJob?.cancel()
+                            activeTranslationJob = coroutineScope.launch {
+                                repository.loadCachedSongByKey(cacheKey)
+                            }
                         },
                         onCopyLine = { line ->
                             copyLyricLine(line)
