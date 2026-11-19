@@ -180,18 +180,14 @@ class MainActivity : ComponentActivity() {
                         onOpenPermissions = {
                             onboardingCompleted = false
                         },
-                        onToggleTheme = {
-                            val nextTheme = when (themeMode) {
-                                ThemeMode.DARK -> ThemeMode.AMOLED
-                                ThemeMode.AMOLED -> ThemeMode.LIGHT
-                                ThemeMode.LIGHT -> ThemeMode.SYSTEM
-                                ThemeMode.SYSTEM -> ThemeMode.DARK
-                            }
-                            MediaStateBus.setThemeMode(nextTheme)
-                            Toast.makeText(this, "Tema: ${nextTheme.label}", Toast.LENGTH_SHORT).show()
+                        onSelectThemeMode = { mode ->
+                            MediaStateBus.setThemeMode(mode)
                         },
                         onToggleKeepScreenOn = {
                             MediaStateBus.setKeepScreenOn(!keepScreenOn)
+                        },
+                        onSetKeepScreenOn = { enabled ->
+                            MediaStateBus.setKeepScreenOn(enabled)
                         },
                         onSetAutoHideOverlayOnPause = { enabled ->
                             MediaStateBus.setAutoHideOverlayOnPause(enabled)

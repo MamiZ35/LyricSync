@@ -65,6 +65,7 @@ data class OverlayConfig(
     val fontSizeSp: Float = 15f,
     val opacity: Float = 0.90f,
     val isTouchLocked: Boolean = false,
+    val showNextLine: Boolean = true,
     val x: Int = 0,
     val y: Int = 180
 )

@@ -16,6 +16,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -71,7 +72,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -153,8 +153,9 @@ fun MainScreen(
     autoHideOverlayOnPause: Boolean,
     loopRange: LoopRange?,
     onOpenPermissions: () -> Unit,
-    onToggleTheme: () -> Unit,
+    onSelectThemeMode: (ThemeMode) -> Unit,
     onToggleKeepScreenOn: () -> Unit,
+    onSetKeepScreenOn: (Boolean) -> Unit,
     onSetAutoHideOverlayOnPause: (Boolean) -> Unit,
     onSetLoopRange: (LoopRange?) -> Unit,
     onSelectTargetLanguage: (String) -> Unit,
@@ -325,8 +326,6 @@ fun MainScreen(
                     displayMode = displayMode,
                     isOverlayActive = isOverlayActive,
                     keepScreenOn = keepScreenOn,
-                    themeMode = themeMode,
-                    onToggleTheme = onToggleTheme,
                     onToggleKeepScreenOn = onToggleKeepScreenOn,
                     onEnterAmbient = { isAmbientFullscreen = true },
                     onSelectTargetLanguage = onSelectTargetLanguage,
@@ -425,27 +424,39 @@ fun MainScreen(
                 }
             }
 
-            // Feature W1: Instrumental / Intro Countdown Bar
+            // Feature W1: Instrumental / Intro Countdown Pill (only during genuine long gaps while playing)
             val instrumentalGap = remember(
+                trackState.hasActiveTrack,
+                trackState.isPlaying,
+                trackState.positionMs,
+                trackState.isManualOverride,
                 lyricsState.isSynced,
                 lyricsState.lines,
-                activeLineIndex,
-                trackState.positionMs,
-                trackState.isManualOverride
+                activeLineIndex
             ) {
-                if (!lyricsState.isSynced || lyricsState.lines.isEmpty() || trackState.isManualOverride) {
+                if (!trackState.hasActiveTrack ||
+                    !trackState.isPlaying ||
+                    !lyricsState.isSynced ||
+                    lyricsState.lines.isEmpty() ||
+                    trackState.isManualOverride
+                ) {
                     null
-                } else if (activeLineIndex == -1 && lyricsState.lines[0].timeMs >= 3000L) {
+                } else if (activeLineIndex == -1) {
                     val nextTime = lyricsState.lines[0].timeMs
-                    val remaining = (nextTime - trackState.positionMs).coerceAtLeast(0L)
-                    if (remaining >= 1000L) Pair(remaining, nextTime) else null
+                    val remaining = nextTime - trackState.positionMs
+                    if (trackState.positionMs >= 300L && nextTime >= 4_000L && remaining in 1_000L..60_000L) {
+                        remaining
+                    } else {
+                        null
+                    }
                 } else if (activeLineIndex in 0 until lyricsState.lines.lastIndex) {
                     val curTime = lyricsState.lines[activeLineIndex].timeMs
                     val nextTime = lyricsState.lines[activeLineIndex + 1].timeMs
                     val gap = nextTime - curTime
-                    if (gap >= 8000L) {
-                        val remaining = (nextTime - trackState.positionMs).coerceAtLeast(0L)
-                        if (remaining >= 1000L) Pair(remaining, gap) else null
+                    val elapsed = trackState.positionMs - curTime
+                    val remaining = nextTime - trackState.positionMs
+                    if (gap >= 14_000L && elapsed >= 6_000L && remaining in 1_000L..60_000L) {
+                        remaining
                     } else {
                         null
                     }
@@ -455,10 +466,7 @@ fun MainScreen(
             }
             if (instrumentalGap != null) {
                 Spacer(modifier = Modifier.height(8.dp))
-                InstrumentalCountdownBanner(
-                    remainingMs = instrumentalGap.first,
-                    totalGapMs = instrumentalGap.second
-                )
+                InstrumentalCountdownBanner(remainingMs = instrumentalGap)
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -709,10 +717,14 @@ fun MainScreen(
 
     if (showSettingsDialog) {
         SettingsAndModelsDialog(
+            themeMode = themeMode,
+            keepScreenOn = keepScreenOn,
             overlayConfig = overlayConfig,
             translationEngine = translationEngine,
             wifiOnlyDownload = wifiOnlyDownload,
             autoHideOverlayOnPause = autoHideOverlayOnPause,
+            onSelectThemeMode = onSelectThemeMode,
+            onSetKeepScreenOn = onSetKeepScreenOn,
             onUpdateOverlayConfig = onUpdateOverlayConfig,
             onSelectTranslationEngine = onSelectTranslationEngine,
             onSetWifiOnlyDownload = onSetWifiOnlyDownload,
@@ -734,8 +746,6 @@ private fun TopHeaderBar(
     displayMode: LyricDisplayMode,
     isOverlayActive: Boolean,
     keepScreenOn: Boolean,
-    themeMode: ThemeMode,
-    onToggleTheme: () -> Unit,
     onToggleKeepScreenOn: () -> Unit,
     onEnterAmbient: () -> Unit,
     onSelectTargetLanguage: (String) -> Unit,
@@ -805,19 +815,6 @@ private fun TopHeaderBar(
                     Icon(
                         imageVector = Icons.Default.Refresh,
                         contentDescription = "Yenile",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                IconButton(onClick = onToggleTheme) {
-                    val icon = when (themeMode) {
-                        ThemeMode.SYSTEM -> Icons.Default.SettingsBrightness
-                        ThemeMode.DARK -> Icons.Default.DarkMode
-                        ThemeMode.AMOLED -> Icons.Default.NightsStay
-                        ThemeMode.LIGHT -> Icons.Default.LightMode
-                    }
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = "Tema: ${themeMode.label}",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -1215,53 +1212,39 @@ private fun NowPlayingCard(
 }
 
 @Composable
-private fun InstrumentalCountdownBanner(
-    remainingMs: Long,
-    totalGapMs: Long
-) {
+private fun InstrumentalCountdownBanner(remainingMs: Long) {
     val remainingSec = ((remainingMs + 999L) / 1000L).coerceAtLeast(1L)
-    val progress = (1f - (remainingMs.toFloat() / totalGapMs.coerceAtLeast(1L).toFloat())).coerceIn(0f, 1f)
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
-            .border(
-                1.dp,
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-                RoundedCornerShape(14.dp)
-            )
-            .padding(horizontal = 14.dp, vertical = 9.dp)
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
+                .border(
+                    1.dp,
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+                    CircleShape
+                )
+                .padding(horizontal = 14.dp, vertical = 6.dp)
         ) {
-            Text(
-                text = "🎸 Enstrümantal Ara",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
+            Icon(
+                imageVector = Icons.Default.MusicNote,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(16.dp)
             )
             Text(
-                text = "Sonraki söze $remainingSec sn",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
+                text = "${remainingSec}s",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
             )
         }
-        Spacer(modifier = Modifier.height(6.dp))
-        LinearProgressIndicator(
-            progress = { progress },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(4.dp)
-                .clip(RoundedCornerShape(2.dp)),
-            color = MaterialTheme.colorScheme.primary,
-            trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
-        )
     }
 }
 
@@ -1778,11 +1761,67 @@ private fun LibraryAndStatsDialog(
 }
 
 @Composable
+private fun SettingsSectionCard(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                RoundedCornerShape(14.dp)
+            )
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = title,
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.primary
+        )
+        content()
+    }
+}
+
+@Composable
+private fun SettingsSwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+            Text(text = title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                text = subtitle,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
 private fun SettingsAndModelsDialog(
+    themeMode: ThemeMode,
+    keepScreenOn: Boolean,
     overlayConfig: OverlayConfig,
     translationEngine: TranslationEngine,
     wifiOnlyDownload: Boolean,
     autoHideOverlayOnPause: Boolean,
+    onSelectThemeMode: (ThemeMode) -> Unit,
+    onSetKeepScreenOn: (Boolean) -> Unit,
     onUpdateOverlayConfig: (OverlayConfig) -> Unit,
     onSelectTranslationEngine: (TranslationEngine) -> Unit,
     onSetWifiOnlyDownload: (Boolean) -> Unit,
@@ -1822,60 +1861,127 @@ private fun SettingsAndModelsDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text(text = "Ayarlar & Dil Modelleri", fontWeight = FontWeight.Bold)
+            Text(text = "Ayarlar & Modeller", fontWeight = FontWeight.Bold)
         },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(
-                    text = "Yüzen Pencere (Overlay)",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.primary
-                )
-
-                Text(
-                    text = "Yazı Boyutu: ${overlayConfig.fontSizeSp.roundToInt()} sp",
-                    fontSize = 13.sp
-                )
-                Slider(
-                    value = overlayConfig.fontSizeSp,
-                    onValueChange = { newSize ->
-                        onUpdateOverlayConfig(overlayConfig.copy(fontSizeSp = newSize))
-                    },
-                    valueRange = 12f..24f
-                )
-
-                Text(
-                    text = "Arka Plan Opaklığı: ${(overlayConfig.opacity * 100).roundToInt()}%",
-                    fontSize = 13.sp
-                )
-                Slider(
-                    value = overlayConfig.opacity,
-                    onValueChange = { newOpacity ->
-                        onUpdateOverlayConfig(overlayConfig.copy(opacity = newOpacity))
-                    },
-                    valueRange = 0.35f..1.0f
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Dokunma Kilidi (Click-Through)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            text = "Açıkken overlay altındaki Spotify butonlarına dokunabilirsiniz.",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                SettingsSectionCard(title = "🎨 Görünüm & Tema") {
+                    Text(
+                        text = "Uygulama Teması",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    ThemeMode.entries.chunked(2).forEach { rowModes ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            rowModes.forEach { mode ->
+                                val selected = mode == themeMode
+                                val modeIcon = when (mode) {
+                                    ThemeMode.DARK -> Icons.Default.DarkMode
+                                    ThemeMode.AMOLED -> Icons.Default.NightsStay
+                                    ThemeMode.LIGHT -> Icons.Default.LightMode
+                                    ThemeMode.SYSTEM -> Icons.Default.SettingsBrightness
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(
+                                            if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                            else MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)
+                                        )
+                                        .border(
+                                            1.dp,
+                                            if (selected) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                                            RoundedCornerShape(10.dp)
+                                        )
+                                        .clickable { onSelectThemeMode(mode) }
+                                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = modeIcon,
+                                        contentDescription = null,
+                                        tint = if (selected) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = mode.label,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (selected) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
                     }
-                    Switch(
+
+                    SettingsSwitchRow(
+                        title = "Ekranı Açık Tut",
+                        subtitle = "Şarkı sözü okurken ekranın otomatik kapanmasını engeller.",
+                        checked = keepScreenOn,
+                        onCheckedChange = onSetKeepScreenOn
+                    )
+                }
+
+                SettingsSectionCard(title = "🪟 Yüzen Pencere (Overlay)") {
+                    Text(
+                        text = "Yazı Boyutu: ${overlayConfig.fontSizeSp.roundToInt()} sp",
+                        fontSize = 13.sp
+                    )
+                    Slider(
+                        value = overlayConfig.fontSizeSp,
+                        onValueChange = { newSize ->
+                            onUpdateOverlayConfig(overlayConfig.copy(fontSizeSp = newSize))
+                        },
+                        valueRange = 12f..24f
+                    )
+
+                    Text(
+                        text = "Arka Plan Opaklığı: ${(overlayConfig.opacity * 100).roundToInt()}%",
+                        fontSize = 13.sp
+                    )
+                    Slider(
+                        value = overlayConfig.opacity,
+                        onValueChange = { newOpacity ->
+                            onUpdateOverlayConfig(overlayConfig.copy(opacity = newOpacity))
+                        },
+                        valueRange = 0.35f..1.0f
+                    )
+
+                    SettingsSwitchRow(
+                        title = "Sıradaki Satırı Önizle",
+                        subtitle = "Aktif sözün altında bir sonraki satırı küçük gösterir.",
+                        checked = overlayConfig.showNextLine,
+                        onCheckedChange = { show ->
+                            onUpdateOverlayConfig(overlayConfig.copy(showNextLine = show))
+                        }
+                    )
+
+                    SettingsSwitchRow(
+                        title = "Müzik Durunca Otomatik Gizle",
+                        subtitle = "Şarkı duraklatılınca 3.5 sn sonra altyazıyı gizler, çalınca geri getirir.",
+                        checked = autoHideOverlayOnPause,
+                        onCheckedChange = onSetAutoHideOverlayOnPause
+                    )
+
+                    SettingsSwitchRow(
+                        title = "Konum & Buton Kilidi",
+                        subtitle = "Açıkken pencere sürüklenemez ve kontrol butonları gizlenir; 🔒 simgesiyle açabilirsiniz.",
                         checked = overlayConfig.isTouchLocked,
                         onCheckedChange = { locked ->
                             onUpdateOverlayConfig(overlayConfig.copy(isTouchLocked = locked))
@@ -1883,280 +1989,235 @@ private fun SettingsAndModelsDialog(
                     )
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Müzik Durunca Otomatik Gizle", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            text = "Şarkı duraklatılınca 3.5 sn sonra altyazıyı gizler, çalınca geri getirir.",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = autoHideOverlayOnPause,
-                        onCheckedChange = onSetAutoHideOverlayOnPause
-                    )
-                }
-
-                HorizontalDivider()
-
-                Text(
-                    text = "Çeviri & Önbellek",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.primary
-                )
-
-                Text(
-                    text = "Çeviri Motoru",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                TranslationEngine.entries.forEach { engine ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(
-                                if (engine == translationEngine) {
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                                } else {
-                                    Color.Transparent
-                                }
-                            )
-                            .clickable { onSelectTranslationEngine(engine) }
-                            .padding(horizontal = 6.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = engine == translationEngine,
-                            onClick = { onSelectTranslationEngine(engine) }
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Column {
-                            Text(
-                                text = engine.label,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                text = if (engine == TranslationEngine.CLOUD_CONTEXT) {
-                                    "Tüm şarkıyı bağlamıyla tek seferde anlamlı çevirir (0.3 sn)."
-                                } else {
-                                    "İnternetsiz çalışır (cihazda dil modeli indirir)."
-                                },
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Sadece Wi-Fi ile Model İndir", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            text = "Mobil veri harcamamak için dil modellerini yalnızca Wi-Fi'da indirir.",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = wifiOnlyDownload,
-                        onCheckedChange = onSetWifiOnlyDownload
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
+                SettingsSectionCard(title = "🌐 Çeviri Motoru & Önbellek") {
                     Text(
-                        text = "Önbellekte $cachedCount şarkı",
+                        text = "Çeviri Motoru",
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.SemiBold
                     )
-                    OutlinedButton(
-                        onClick = {
-                            scope.launch {
-                                onClearCache()
-                                refreshStats()
-                            }
-                        },
-                        enabled = cachedCount > 0 && !isRefreshing,
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Text("Temizle", fontSize = 12.sp)
-                    }
-                }
-
-                Text(
-                    text = "İndirilen ML Kit Dil Modelleri",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                when {
-                    isRefreshing -> {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    }
-                    downloadedModels.isEmpty() -> {
-                        Text(
-                            text = "Henüz indirilmiş dil modeli yok.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    else -> {
-                        downloadedModels.forEach { langCode ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
+                    TranslationEngine.entries.forEach { engine ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (engine == translationEngine) {
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                    } else {
+                                        Color.Transparent
+                                    }
+                                )
+                                .clickable { onSelectTranslationEngine(engine) }
+                                .padding(horizontal = 6.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = engine == translationEngine,
+                                onClick = { onSelectTranslationEngine(engine) }
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Column {
                                 Text(
-                                    text = "Model: ${langCode.uppercase()}",
+                                    text = engine.label,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Medium
                                 )
-                                IconButton(
-                                    onClick = {
-                                        scope.launch {
-                                            onDeleteModel(langCode)
-                                            refreshStats()
-                                        }
+                                Text(
+                                    text = if (engine == TranslationEngine.CLOUD_CONTEXT) {
+                                        "Tüm şarkıyı bağlamıyla tek seferde anlamlı çevirir (0.3 sn)."
+                                    } else {
+                                        "İnternetsiz çalışır (cihazda dil modeli indirir)."
                                     },
-                                    modifier = Modifier.size(28.dp)
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    SettingsSwitchRow(
+                        title = "Sadece Wi-Fi ile Model İndir",
+                        subtitle = "Mobil veri harcamamak için dil modellerini yalnızca Wi-Fi'da indirir.",
+                        checked = wifiOnlyDownload,
+                        onCheckedChange = onSetWifiOnlyDownload
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Önbellekte $cachedCount şarkı",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    onClearCache()
+                                    refreshStats()
+                                }
+                            },
+                            enabled = cachedCount > 0 && !isRefreshing,
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Temizle", fontSize = 12.sp)
+                        }
+                    }
+
+                    Text(
+                        text = "İndirilen ML Kit Dil Modelleri",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    when {
+                        isRefreshing -> {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        }
+                        downloadedModels.isEmpty() -> {
+                            Text(
+                                text = "Henüz indirilmiş dil modeli yok.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        else -> {
+                            downloadedModels.forEach { langCode ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.65f))
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Delete,
-                                        contentDescription = "Modeli Sil",
-                                        tint = Color(0xFFEF4444),
-                                        modifier = Modifier.size(18.dp)
+                                    Text(
+                                        text = "Model: ${langCode.uppercase()}",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium
                                     )
+                                    IconButton(
+                                        onClick = {
+                                            scope.launch {
+                                                onDeleteModel(langCode)
+                                                refreshStats()
+                                            }
+                                        },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "Modeli Sil",
+                                            tint = Color(0xFFEF4444),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
 
-                HorizontalDivider()
-
-                Text(
-                    text = "Uygulama Güncellemesi",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.primary
-                )
-
-                Text(
-                    text = "Mevcut Sürüm: v${BuildConfig.VERSION_NAME}",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                if (updateStatus != null) {
+                SettingsSectionCard(title = "🚀 Uygulama Güncellemesi") {
                     Text(
-                        text = updateStatus!!,
+                        text = "Mevcut Sürüm: v${BuildConfig.VERSION_NAME}",
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = if (releaseInfo?.isUpdateAvailable == true) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                }
 
-                if (isDownloadingApk) {
-                    LinearProgressIndicator(
-                        progress = { downloadProgress / 100f },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp))
-                    )
-                    Text(
-                        text = "APK indiriliyor: %$downloadProgress",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            scope.launch {
-                                isCheckingUpdate = true
-                                updateStatus = "GitHub kontrol ediliyor..."
-                                val info = onCheckForUpdate()
-                                releaseInfo = info
-                                updateStatus = when {
-                                    info == null -> "Güncelleme bilgisi alınamadı."
-                                    info.isUpdateAvailable -> "Yeni sürüm bulundu: ${info.latestTag}"
-                                    else -> "Güncel sürümü (${info.latestTag}) kullanıyorsunuz ✓"
-                                }
-                                isCheckingUpdate = false
-                            }
-                        },
-                        enabled = !isCheckingUpdate && !isDownloadingApk,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
+                    if (updateStatus != null) {
                         Text(
-                            text = if (isCheckingUpdate) "Kontrol..." else "Kontrol Et",
-                            fontSize = 12.sp
+                            text = updateStatus!!,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (releaseInfo?.isUpdateAvailable == true) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurface
                         )
                     }
 
-                    Button(
-                        onClick = {
-                            val targetUrl = releaseInfo?.downloadUrl ?: UpdateChecker.LATEST_APK_URL
-                            isDownloadingApk = true
-                            downloadProgress = 0
-                            updateStatus = "Güncelleme paketleri indiriliyor..."
-                            onDownloadAndInstallApk(
-                                targetUrl,
-                                { pct -> downloadProgress = pct },
-                                { success ->
-                                    isDownloadingApk = false
-                                    updateStatus = if (success) {
-                                        "İndirme tamamlandı, yükleyici açılıyor..."
-                                    } else {
-                                        "İndirme başarısız. Tarayıcıdan indirmeyi deneyin."
-                                    }
-                                }
-                            )
-                        },
-                        enabled = !isDownloadingApk,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(if (isDownloadingApk) "%$downloadProgress" else "İndir & Kur", fontSize = 12.sp)
+                    if (isDownloadingApk) {
+                        LinearProgressIndicator(
+                            progress = { downloadProgress / 100f },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                        )
+                        Text(
+                            text = "APK indiriliyor: %$downloadProgress",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
-                }
 
-                TextButton(
-                    onClick = {
-                        onOpenDownloadUrl(releaseInfo?.downloadUrl ?: UpdateChecker.LATEST_APK_URL)
-                    },
-                    modifier = Modifier.align(Alignment.End)
-                ) {
-                    Text("Tarayıcıdan İndir", fontSize = 11.sp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    isCheckingUpdate = true
+                                    updateStatus = "GitHub kontrol ediliyor..."
+                                    val info = onCheckForUpdate()
+                                    releaseInfo = info
+                                    updateStatus = when {
+                                        info == null -> "Güncelleme bilgisi alınamadı."
+                                        info.isUpdateAvailable -> "Yeni sürüm bulundu: ${info.latestTag}"
+                                        else -> "Güncel sürümü (${info.latestTag}) kullanıyorsunuz ✓"
+                                    }
+                                    isCheckingUpdate = false
+                                }
+                            },
+                            enabled = !isCheckingUpdate && !isDownloadingApk,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text(
+                                text = if (isCheckingUpdate) "Kontrol..." else "Kontrol Et",
+                                fontSize = 12.sp
+                            )
+                        }
+
+                        Button(
+                            onClick = {
+                                val targetUrl = releaseInfo?.downloadUrl ?: UpdateChecker.LATEST_APK_URL
+                                isDownloadingApk = true
+                                downloadProgress = 0
+                                updateStatus = "Güncelleme paketleri indiriliyor..."
+                                onDownloadAndInstallApk(
+                                    targetUrl,
+                                    { pct -> downloadProgress = pct },
+                                    { success ->
+                                        isDownloadingApk = false
+                                        updateStatus = if (success) {
+                                            "İndirme tamamlandı, yükleyici açılıyor..."
+                                        } else {
+                                            "İndirme başarısız. Tarayıcıdan indirmeyi deneyin."
+                                        }
+                                    }
+                                )
+                            },
+                            enabled = !isDownloadingApk,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(if (isDownloadingApk) "%$downloadProgress" else "İndir & Kur", fontSize = 12.sp)
+                        }
+                    }
+
+                    TextButton(
+                        onClick = {
+                            onOpenDownloadUrl(releaseInfo?.downloadUrl ?: UpdateChecker.LATEST_APK_URL)
+                        },
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Text("Tarayıcıdan İndir", fontSize = 11.sp)
+                    }
                 }
             }
         },

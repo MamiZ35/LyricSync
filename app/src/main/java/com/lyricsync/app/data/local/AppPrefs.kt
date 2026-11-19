@@ -60,6 +60,7 @@ class AppPrefs(context: Context) {
         fontSizeSp = prefs.getFloat(KEY_OVERLAY_FONT_SIZE, 15f).coerceIn(12f, 24f),
         opacity = prefs.getFloat(KEY_OVERLAY_OPACITY, 0.90f).coerceIn(0.35f, 1.0f),
         isTouchLocked = false,
+        showNextLine = prefs.getBoolean(KEY_OVERLAY_NEXT_LINE, true),
         x = prefs.getInt(KEY_OVERLAY_X, 0),
         y = prefs.getInt(KEY_OVERLAY_Y, 180).coerceAtLeast(0)
     )
@@ -68,6 +69,7 @@ class AppPrefs(context: Context) {
         prefs.edit()
             .putFloat(KEY_OVERLAY_FONT_SIZE, config.fontSizeSp.coerceIn(12f, 24f))
             .putFloat(KEY_OVERLAY_OPACITY, config.opacity.coerceIn(0.35f, 1.0f))
+            .putBoolean(KEY_OVERLAY_NEXT_LINE, config.showNextLine)
             .putInt(KEY_OVERLAY_X, config.x)
             .putInt(KEY_OVERLAY_Y, config.y.coerceAtLeast(0))
             .apply()
@@ -83,6 +85,7 @@ class AppPrefs(context: Context) {
         const val KEY_TRANSLATION_ENGINE = "translation_engine"
         const val KEY_OVERLAY_FONT_SIZE = "overlay_font_size"
         const val KEY_OVERLAY_OPACITY = "overlay_opacity"
+        const val KEY_OVERLAY_NEXT_LINE = "overlay_show_next_line"
         const val KEY_OVERLAY_X = "overlay_x"
         const val KEY_OVERLAY_Y = "overlay_y"
     }
