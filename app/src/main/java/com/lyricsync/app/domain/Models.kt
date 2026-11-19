@@ -46,6 +46,11 @@ enum class LyricDisplayMode(val label: String) {
     ORIGINAL_ONLY("Sadece Orijinal")
 }
 
+enum class TranslationEngine(val label: String) {
+    CLOUD_CONTEXT("Akıllı Bulut (Bağlamsal)"),
+    ON_DEVICE_MLKIT("Cihaz İçi (Çevrimdışı ML Kit)")
+}
+
 data class OverlayConfig(
     val fontSizeSp: Float = 15f,
     val opacity: Float = 0.90f,

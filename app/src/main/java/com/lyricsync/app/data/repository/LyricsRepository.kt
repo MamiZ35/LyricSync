@@ -12,12 +12,14 @@ import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 import com.lyricsync.app.data.local.CachedLyricsEntity
 import com.lyricsync.app.data.local.LyricsDatabase
+import com.lyricsync.app.data.remote.CloudTranslator
 import com.lyricsync.app.data.remote.LrcLibApi
 import com.lyricsync.app.data.remote.LrcLibResponse
 import com.lyricsync.app.domain.LrcParser
 import com.lyricsync.app.domain.LyricLine
 import com.lyricsync.app.domain.LyricsState
 import com.lyricsync.app.domain.MediaTrackState
+import com.lyricsync.app.domain.TranslationEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -36,15 +38,17 @@ class LyricsRepository(context: Context) {
     suspend fun loadAndTranslateLyrics(
         track: MediaTrackState,
         targetLang: String,
-        preFetchedResponse: LrcLibResponse? = null
+        preFetchedResponse: LrcLibResponse? = null,
+        forceRefresh: Boolean = false
     ) = withContext(Dispatchers.IO) {
         if (!track.hasActiveTrack) return@withContext
 
         val trackId = track.trackId
-        val cacheKey = "$trackId|$targetLang"
+        val engine = MediaStateBus.translationEngine.value
+        val cacheKey = "${engine.name}|$trackId|$targetLang"
 
-        // 1. Check Room Offline Cache first unless user explicitly picked a manual result
-        if (preFetchedResponse == null) {
+        // 1. Check Room Offline Cache first unless user explicitly picked a manual result or forced refresh
+        if (preFetchedResponse == null && !forceRefresh) {
             val cached = safeCatching { dao.getByKey(cacheKey) }.getOrNull()
             if (cached != null) {
                 val cachedLines: List<LyricLine> = safeCatching {
@@ -123,7 +127,7 @@ class LyricsRepository(context: Context) {
             return@withContext
         }
 
-        // Emit original lyrics immediately so synced scrolling starts without waiting for ML Kit
+        // Emit original lyrics immediately so synced scrolling starts without waiting for translation
         publishIfCurrentTrack(
             trackId,
             LyricsState(
@@ -132,11 +136,49 @@ class LyricsRepository(context: Context) {
                 isSynced = isSynced,
                 targetLang = targetLang,
                 isLoading = false,
-                statusMessage = "Dil algılanıyor..."
+                statusMessage = if (engine == TranslationEngine.CLOUD_CONTEXT) {
+                    "Şarkı sözleri bağlamsal bulut motoruyla çevriliyor..."
+                } else {
+                    "Dil algılanıyor..."
+                }
             )
         )
 
-        // 4. Identify source language on-device via Google ML Kit Language ID
+        // 4A. Primary Path: Context-Aware Full-Song Cloud Translation (Option C)
+        if (engine == TranslationEngine.CLOUD_CONTEXT) {
+            val cloudResult = CloudTranslator.translateFullSongContextAware(parsedLines, targetLang)
+            currentCoroutineContext().ensureActive()
+            if (cloudResult != null) {
+                val detectedLang = TranslateLanguage.fromLanguageTag(cloudResult.first)
+                    ?: cloudResult.first.lowercase()
+                val translatedLines = cloudResult.second
+                saveToCache(cacheKey, track, detectedLang, targetLang, isSynced, translatedLines)
+                publishIfCurrentTrack(
+                    trackId,
+                    LyricsState(
+                        trackId = trackId,
+                        lines = translatedLines,
+                        isSynced = isSynced,
+                        sourceLang = detectedLang,
+                        targetLang = targetLang,
+                        isLoading = false,
+                        isDownloadingModel = false,
+                        isFromCache = false,
+                        statusMessage = null
+                    )
+                )
+                return@withContext
+            }
+            // Fall through to offline ML Kit if cloud is unreachable
+            publishIfCurrentTrack(
+                trackId,
+                MediaStateBus.lyricsState.value.copy(
+                    statusMessage = "Bulut erişilemedi, cihaz içi ML Kit yedeğine geçiliyor..."
+                )
+            )
+        }
+
+        // 4B. Offline Path / Fallback: Identify source language on-device via Google ML Kit Language ID
         val sampleText = parsedLines.take(15).joinToString("\n") { it.originalText }
         val langIdentifier = LanguageIdentification.getClient()
         val detectedTag = try {
@@ -218,14 +260,16 @@ class LyricsRepository(context: Context) {
             val translatedLines = parsedLines.map { line ->
                 currentCoroutineContext().ensureActive()
                 val clean = line.originalText.trim()
-                val translated = lineTranslationCache.getOrPut(clean) {
-                    safeCatching { translator.translate(clean).await() }.getOrDefault(clean)
+                val normalized = CloudTranslator.normalizeLyricText(clean)
+                val translated = lineTranslationCache.getOrPut(normalized) {
+                    safeCatching { translator.translate(normalized).await() }.getOrDefault(clean)
                 }
                 line.copy(translatedText = translated)
             }
 
-            // 6. Save translated lyrics to Room cache for instant offline reuse
-            saveToCache(cacheKey, track, sourceLang, targetLang, isSynced, translatedLines)
+            // 6. Save translated lyrics under ON_DEVICE_MLKIT key so offline fallback does not poison cloud cache
+            val mlKitCacheKey = "${TranslationEngine.ON_DEVICE_MLKIT.name}|$trackId|$targetLang"
+            saveToCache(mlKitCacheKey, track, sourceLang, targetLang, isSynced, translatedLines)
 
             publishIfCurrentTrack(
                 trackId,

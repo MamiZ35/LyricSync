@@ -9,10 +9,12 @@ import com.lyricsync.app.domain.LyricsState
 import com.lyricsync.app.domain.MediaTrackState
 import com.lyricsync.app.domain.OverlayConfig
 import com.lyricsync.app.domain.ThemeMode
+import com.lyricsync.app.domain.TranslationEngine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.Locale
+import kotlin.math.abs
 
 /**
  * Shared reactive state bus linking MediaNotificationListenerService,
@@ -37,6 +39,9 @@ object MediaStateBus {
 
     private val _displayMode = MutableStateFlow(LyricDisplayMode.DUAL)
     val displayMode: StateFlow<LyricDisplayMode> = _displayMode.asStateFlow()
+
+    private val _translationEngine = MutableStateFlow(TranslationEngine.CLOUD_CONTEXT)
+    val translationEngine: StateFlow<TranslationEngine> = _translationEngine.asStateFlow()
 
     private val _wifiOnlyDownload = MutableStateFlow(false)
     val wifiOnlyDownload: StateFlow<Boolean> = _wifiOnlyDownload.asStateFlow()
@@ -69,6 +74,7 @@ object MediaStateBus {
             _targetLanguage.value = savedLang
             _themeMode.value = appPrefs.themeMode
             _displayMode.value = appPrefs.displayMode
+            _translationEngine.value = appPrefs.translationEngine
             _wifiOnlyDownload.value = appPrefs.wifiOnlyDownload
             _overlayConfig.value = appPrefs.getOverlayConfig()
             _lyricsState.value = _lyricsState.value.copy(targetLang = savedLang)
@@ -81,10 +87,16 @@ object MediaStateBus {
     }
 
     fun updatePosition(positionMs: Long, isPlaying: Boolean) {
+        // Always update active line at 100ms precision while throttling full trackState UI emissions
+        recalculateActiveLine(positionMs)
         val current = _trackState.value
-        if (current.positionMs != positionMs || current.isPlaying != isPlaying) {
+        val secondChanged = (positionMs / 1000L) != (current.positionMs / 1000L)
+        if (current.isPlaying != isPlaying ||
+            secondChanged ||
+            positionMs < current.positionMs ||
+            abs(positionMs - current.positionMs) >= 900L
+        ) {
             _trackState.value = current.copy(positionMs = positionMs, isPlaying = isPlaying)
-            recalculateActiveLine(positionMs)
         }
     }
 
@@ -114,6 +126,11 @@ object MediaStateBus {
     fun setDisplayMode(mode: LyricDisplayMode) {
         _displayMode.value = mode
         prefs?.displayMode = mode
+    }
+
+    fun setTranslationEngine(engine: TranslationEngine) {
+        _translationEngine.value = engine
+        prefs?.translationEngine = engine
     }
 
     fun setWifiOnlyDownload(wifiOnly: Boolean) {

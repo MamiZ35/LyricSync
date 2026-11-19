@@ -61,6 +61,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -95,6 +96,7 @@ import com.lyricsync.app.domain.LyricsState
 import com.lyricsync.app.domain.MediaTrackState
 import com.lyricsync.app.domain.OverlayConfig
 import com.lyricsync.app.domain.ThemeMode
+import com.lyricsync.app.domain.TranslationEngine
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -120,12 +122,14 @@ fun MainScreen(
     isOverlayActive: Boolean,
     themeMode: ThemeMode,
     displayMode: LyricDisplayMode,
+    translationEngine: TranslationEngine,
     overlayConfig: OverlayConfig,
     wifiOnlyDownload: Boolean,
     onOpenPermissions: () -> Unit,
     onToggleTheme: () -> Unit,
     onSelectTargetLanguage: (String) -> Unit,
     onSelectDisplayMode: (LyricDisplayMode) -> Unit,
+    onSelectTranslationEngine: (TranslationEngine) -> Unit,
     onToggleOverlay: () -> Unit,
     onRetryLyrics: () -> Unit,
     onSeekToMs: (Long) -> Unit,
@@ -335,8 +339,10 @@ fun MainScreen(
     if (showSettingsDialog) {
         SettingsAndModelsDialog(
             overlayConfig = overlayConfig,
+            translationEngine = translationEngine,
             wifiOnlyDownload = wifiOnlyDownload,
             onUpdateOverlayConfig = onUpdateOverlayConfig,
+            onSelectTranslationEngine = onSelectTranslationEngine,
             onSetWifiOnlyDownload = onSetWifiOnlyDownload,
             onLoadCacheAndModels = onLoadCacheAndModels,
             onClearCache = onClearCache,
@@ -1049,8 +1055,10 @@ private fun ManualSearchDialog(
 @Composable
 private fun SettingsAndModelsDialog(
     overlayConfig: OverlayConfig,
+    translationEngine: TranslationEngine,
     wifiOnlyDownload: Boolean,
     onUpdateOverlayConfig: (OverlayConfig) -> Unit,
+    onSelectTranslationEngine: (TranslationEngine) -> Unit,
     onSetWifiOnlyDownload: (Boolean) -> Unit,
     onLoadCacheAndModels: suspend () -> Pair<Int, List<String>>,
     onClearCache: suspend () -> Unit,
@@ -1148,6 +1156,51 @@ private fun SettingsAndModelsDialog(
                     fontSize = 14.sp,
                     color = MaterialTheme.colorScheme.primary
                 )
+
+                Text(
+                    text = "Çeviri Motoru",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                TranslationEngine.entries.forEach { engine ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (engine == translationEngine) {
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                } else {
+                                    Color.Transparent
+                                }
+                            )
+                            .clickable { onSelectTranslationEngine(engine) }
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = engine == translationEngine,
+                            onClick = { onSelectTranslationEngine(engine) }
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Column {
+                            Text(
+                                text = engine.label,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = if (engine == TranslationEngine.CLOUD_CONTEXT) {
+                                    "Tüm şarkıyı bağlamıyla tek seferde anlamlı çevirir (0.3 sn)."
+                                } else {
+                                    "İnternetsiz çalışır (cihazda dil modeli indirir)."
+                                },
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),

@@ -5,6 +5,7 @@ import com.google.mlkit.nl.translate.TranslateLanguage
 import com.lyricsync.app.domain.LyricDisplayMode
 import com.lyricsync.app.domain.OverlayConfig
 import com.lyricsync.app.domain.ThemeMode
+import com.lyricsync.app.domain.TranslationEngine
 import java.util.Locale
 
 class AppPrefs(context: Context) {
@@ -38,6 +39,15 @@ class AppPrefs(context: Context) {
         get() = prefs.getBoolean(KEY_WIFI_ONLY, false)
         set(value) = prefs.edit().putBoolean(KEY_WIFI_ONLY, value).apply()
 
+    var translationEngine: TranslationEngine
+        get() = runCatching {
+            TranslationEngine.valueOf(
+                prefs.getString(KEY_TRANSLATION_ENGINE, TranslationEngine.CLOUD_CONTEXT.name)
+                    ?: TranslationEngine.CLOUD_CONTEXT.name
+            )
+        }.getOrDefault(TranslationEngine.CLOUD_CONTEXT)
+        set(value) = prefs.edit().putString(KEY_TRANSLATION_ENGINE, value.name).apply()
+
     fun getOverlayConfig(): OverlayConfig = OverlayConfig(
         fontSizeSp = prefs.getFloat(KEY_OVERLAY_FONT_SIZE, 15f).coerceIn(12f, 24f),
         opacity = prefs.getFloat(KEY_OVERLAY_OPACITY, 0.90f).coerceIn(0.35f, 1.0f),
@@ -60,6 +70,7 @@ class AppPrefs(context: Context) {
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_DISPLAY_MODE = "display_mode"
         const val KEY_WIFI_ONLY = "wifi_only_download"
+        const val KEY_TRANSLATION_ENGINE = "translation_engine"
         const val KEY_OVERLAY_FONT_SIZE = "overlay_font_size"
         const val KEY_OVERLAY_OPACITY = "overlay_opacity"
         const val KEY_OVERLAY_X = "overlay_x"

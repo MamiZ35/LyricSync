@@ -36,6 +36,7 @@ import com.lyricsync.app.service.MediaNotificationListenerService
 import com.lyricsync.app.ui.screens.MainScreen
 import com.lyricsync.app.ui.screens.PermissionOnboardingScreen
 import com.lyricsync.app.ui.theme.LyricSyncTheme
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -108,9 +109,11 @@ class MainActivity : ComponentActivity() {
             val isOverlayActive by MediaStateBus.isOverlayActive.collectAsState()
             val themeMode by MediaStateBus.themeMode.collectAsState()
             val displayMode by MediaStateBus.displayMode.collectAsState()
+            val translationEngine by MediaStateBus.translationEngine.collectAsState()
             val overlayConfig by MediaStateBus.overlayConfig.collectAsState()
             val wifiOnlyDownload by MediaStateBus.wifiOnlyDownload.collectAsState()
             val coroutineScope = rememberCoroutineScope()
+            var activeTranslationJob by remember { mutableStateOf<Job?>(null) }
 
             LyricSyncTheme(themeMode = themeMode) {
                 if (!onboardingCompleted) {
@@ -139,6 +142,7 @@ class MainActivity : ComponentActivity() {
                         isOverlayActive = isOverlayActive,
                         themeMode = themeMode,
                         displayMode = displayMode,
+                        translationEngine = translationEngine,
                         overlayConfig = overlayConfig,
                         wifiOnlyDownload = wifiOnlyDownload,
                         onOpenPermissions = {
@@ -155,13 +159,26 @@ class MainActivity : ComponentActivity() {
                         onSelectTargetLanguage = { langCode ->
                             MediaStateBus.setTargetLanguage(langCode)
                             if (trackState.hasActiveTrack && (trackState.isManualOverride || !hasNotificationAccess)) {
-                                coroutineScope.launch {
+                                activeTranslationJob?.cancel()
+                                activeTranslationJob = coroutineScope.launch {
                                     repository.loadAndTranslateLyrics(trackState, langCode)
                                 }
                             }
                         },
                         onSelectDisplayMode = { mode ->
                             MediaStateBus.setDisplayMode(mode)
+                        },
+                        onSelectTranslationEngine = { engine ->
+                            MediaStateBus.setTranslationEngine(engine)
+                            if (trackState.hasActiveTrack && (trackState.isManualOverride || !hasNotificationAccess)) {
+                                activeTranslationJob?.cancel()
+                                activeTranslationJob = coroutineScope.launch {
+                                    repository.loadAndTranslateLyrics(
+                                        trackState,
+                                        MediaStateBus.targetLanguage.value
+                                    )
+                                }
+                            }
                         },
                         onToggleOverlay = {
                             if (!Settings.canDrawOverlays(this)) {
@@ -174,10 +191,12 @@ class MainActivity : ComponentActivity() {
                         },
                         onRetryLyrics = {
                             if (trackState.hasActiveTrack) {
-                                coroutineScope.launch {
+                                activeTranslationJob?.cancel()
+                                activeTranslationJob = coroutineScope.launch {
                                     repository.loadAndTranslateLyrics(
                                         trackState,
-                                        MediaStateBus.targetLanguage.value
+                                        MediaStateBus.targetLanguage.value,
+                                        forceRefresh = true
                                     )
                                 }
                             }
@@ -198,7 +217,8 @@ class MainActivity : ComponentActivity() {
                             repository.searchLyricsManual(query)
                         },
                         onSelectManualResult = { item ->
-                            coroutineScope.launch {
+                            activeTranslationJob?.cancel()
+                            activeTranslationJob = coroutineScope.launch {
                                 repository.selectManualLyrics(
                                     item = item,
                                     targetLang = MediaStateBus.targetLanguage.value

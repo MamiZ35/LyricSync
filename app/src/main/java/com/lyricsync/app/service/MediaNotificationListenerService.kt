@@ -36,6 +36,8 @@ class MediaNotificationListenerService : NotificationListenerService() {
     private lateinit var repository: LyricsRepository
 
     private var lastSyncedControllerTrackId: String = ""
+    private var lastUserSeekElapsedRealtime: Long = 0L
+    private var lastUserSeekPositionMs: Long = 0L
     private var cachedArtTrackId: String = ""
     private var cachedAlbumArt: Bitmap? = null
     private var cachedAccentColor: Int? = null
@@ -81,6 +83,8 @@ class MediaNotificationListenerService : NotificationListenerService() {
         }
         MediaStateBus.onSeekToMs = { posMs ->
             activeController?.let { controller ->
+                lastUserSeekElapsedRealtime = SystemClock.elapsedRealtime()
+                lastUserSeekPositionMs = posMs
                 controller.transportControls.seekTo(posMs)
                 val isPlaying = controller.playbackState?.state == PlaybackState.STATE_PLAYING
                 MediaStateBus.updatePosition(posMs, isPlaying)
@@ -93,12 +97,13 @@ class MediaNotificationListenerService : NotificationListenerService() {
             activeController?.transportControls?.skipToPrevious()
         }
 
-        // Automatically fetch & translate lyrics whenever the active track or target language changes
+        // Automatically fetch & translate lyrics whenever track, target language, or engine changes
         serviceScope.launch {
             combine(
                 MediaStateBus.trackState.map { it.trackId }.distinctUntilChanged(),
-                MediaStateBus.targetLanguage
-            ) { _, targetLang ->
+                MediaStateBus.targetLanguage,
+                MediaStateBus.translationEngine
+            ) { _, targetLang, _ ->
                 Pair(MediaStateBus.trackState.value, targetLang)
             }.collectLatest { (track, targetLang) ->
                 if (track.hasActiveTrack && !track.isManualOverride) {
@@ -207,6 +212,9 @@ class MediaNotificationListenerService : NotificationListenerService() {
             if (!isNewLiveTrack) return
         }
 
+        if (controllerTrackId != lastSyncedControllerTrackId) {
+            lastUserSeekElapsedRealtime = 0L
+        }
         lastSyncedControllerTrackId = controllerTrackId
 
         if (title.isBlank()) return
@@ -264,6 +272,12 @@ class MediaNotificationListenerService : NotificationListenerService() {
     }
 
     private fun computeCurrentPosition(state: PlaybackState?, durationMs: Long): Long {
+        val sinceSeek = SystemClock.elapsedRealtime() - lastUserSeekElapsedRealtime
+        if (lastUserSeekElapsedRealtime > 0L && sinceSeek in 0L..550L) {
+            val isPlaying = state?.state == PlaybackState.STATE_PLAYING
+            val extrapolated = if (isPlaying) lastUserSeekPositionMs + sinceSeek else lastUserSeekPositionMs
+            return if (durationMs > 0L) extrapolated.coerceAtMost(durationMs) else extrapolated
+        }
         if (state == null) return 0L
         val basePos = state.position.coerceAtLeast(0L)
         val calculated = if (state.state == PlaybackState.STATE_PLAYING && state.lastPositionUpdateTime > 0L) {
