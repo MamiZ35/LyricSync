@@ -29,6 +29,7 @@ data class LyricsState(
     val isSynced: Boolean = true,
     val sourceLang: String = "",
     val targetLang: String = "tr",
+    val syncOffsetMs: Long = 0L,
     val isLoading: Boolean = false,
     val isDownloadingModel: Boolean = false,
     val isFromCache: Boolean = false,

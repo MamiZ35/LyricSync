@@ -100,4 +100,68 @@ class LrcParserTest {
         assertFalse(UpdateChecker.isTrustedGithubUrl("https://example.com/LyricSync.apk"))
         assertFalse(UpdateChecker.isTrustedGithubUrl(""))
     }
+
+    @Test
+    fun `parseSyncedLyrics applies global offset tag and strips inline word timestamps`() {
+        val raw = """
+            [offset:500]
+            [00:10.00] <00:10.20>Hello <00:10.60>world
+            [00:00.20] Intro
+        """.trimIndent()
+
+        val parsed = LrcParser.parseSyncedLyrics(raw)
+        assertEquals(2, parsed.size)
+        assertEquals(700L, parsed[0].timeMs)
+        assertEquals("Intro", parsed[0].originalText)
+        assertEquals(10_500L, parsed[1].timeMs)
+        assertEquals("Hello world", parsed[1].originalText)
+    }
+
+    @Test
+    fun `parseSyncedLyrics merges duplicate timestamp lines cleanly`() {
+        val raw = """
+            [00:10.00] Line A
+            [00:10.00] Line B
+            [00:10.00] Line A
+        """.trimIndent()
+
+        val parsed = LrcParser.parseSyncedLyrics(raw)
+        assertEquals(1, parsed.size)
+        assertEquals(10_000L, parsed[0].timeMs)
+        assertEquals("Line A • Line B", parsed[0].originalText)
+    }
+
+    @Test
+    fun `findActiveLineIndex applies positive and negative syncOffsetMs`() {
+        val lines = listOf(
+            LyricLine(1000L, "One"),
+            LyricLine(5000L, "Two"),
+            LyricLine(9000L, "Three")
+        )
+        assertEquals(1, LrcParser.findActiveLineIndex(lines, 4600L, isSynced = true, syncOffsetMs = 500L))
+        assertEquals(0, LrcParser.findActiveLineIndex(lines, 5200L, isSynced = true, syncOffsetMs = -500L))
+        assertEquals(-1, LrcParser.findActiveLineIndex(lines, 1200L, isSynced = true, syncOffsetMs = -500L))
+    }
+
+    @Test
+    fun `cleanTrackTitleForSearch and cleanArtistForSearch strip noise while preserving real title parentheses`() {
+        assertEquals("Starboy", LrcParser.cleanTrackTitleForSearch("Starboy [Explicit]"))
+        assertEquals("Bohemian Rhapsody", LrcParser.cleanTrackTitleForSearch("Bohemian Rhapsody - Remastered 2011"))
+        assertEquals("Love The Way You Lie (Part II)", LrcParser.cleanTrackTitleForSearch("Love The Way You Lie (Part II) (feat. Eminem)"))
+        assertEquals("(Don't Fear) The Reaper", LrcParser.cleanTrackTitleForSearch("(Don't Fear) The Reaper"))
+        assertEquals("Daft Punk", LrcParser.cleanArtistForSearch("Daft Punk, Julian Casablancas"))
+    }
+
+    @Test
+    fun `recoverNumberedTranslations recovers lines when translator merges or splits newlines`() {
+        val raw = """
+            1. Merhaba dünya
+            2. Nasılsın
+            bugün?
+            3. Görüşürüz
+        """.trimIndent()
+
+        val recovered = CloudTranslator.recoverNumberedTranslations(raw, expectedCount = 3)
+        assertEquals(listOf("Merhaba dünya", "Nasılsın bugün?", "Görüşürüz"), recovered)
+    }
 }

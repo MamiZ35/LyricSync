@@ -6,6 +6,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
@@ -63,7 +64,7 @@ object CloudTranslator {
     ): Pair<String, List<LyricLine>>? = withContext(Dispatchers.IO) {
         if (lines.isEmpty()) return@withContext null
 
-        val chunks = chunkLinesByCharLimit(lines, maxChars = 4200)
+        val chunks = chunkLinesByCharLimit(lines, maxChars = 3800)
         val resultLines = ArrayList<LyricLine>(lines.size)
         var detectedSourceLang = ""
 
@@ -111,16 +112,49 @@ object CloudTranslator {
             return Pair(numberedAttempt.second, mapped)
         }
 
-        return null
+        val recovered = recoverNumberedTranslations(numberedAttempt.first, chunk.size) ?: return null
+        val mappedRecovered = chunk.mapIndexed { index, line ->
+            line.copy(translatedText = recovered[index].ifBlank { line.originalText })
+        }
+        return Pair(numberedAttempt.second, mappedRecovered)
+    }
+
+    internal fun recoverNumberedTranslations(rawTranslated: String, expectedCount: Int): List<String>? {
+        if (expectedCount <= 0) return emptyList()
+        val markerRegex = Regex("""(?:^|\n)\s*(\d{1,4})[.)]\s*""")
+        val matches = markerRegex.findAll(rawTranslated).toList()
+        if (matches.isEmpty()) return null
+        val byNumber = HashMap<Int, String>(expectedCount)
+        for (i in matches.indices) {
+            val num = matches[i].groupValues[1].toIntOrNull() ?: continue
+            val contentStart = matches[i].range.last + 1
+            val contentEnd = if (i + 1 < matches.size) matches[i + 1].range.first else rawTranslated.length
+            if (contentStart <= contentEnd) {
+                val text = rawTranslated.substring(contentStart, contentEnd).replace("\n", " ").trim()
+                if (num in 1..expectedCount && text.isNotEmpty()) {
+                    byNumber[num] = text
+                }
+            }
+        }
+        val minRequired = maxOf(1, (expectedCount * 4) / 5)
+        if (byNumber.size < minRequired) return null
+        return (1..expectedCount).map { idx -> byNumber[idx].orEmpty() }
     }
 
     private fun executeRequest(textBlock: String, targetLang: String): Pair<String, String>? {
         return try {
+            val url = "https://clients5.google.com/translate_a/t".toHttpUrlOrNull()
+                ?.newBuilder()
+                ?.addQueryParameter("client", "dict-chrome-ex")
+                ?.addQueryParameter("sl", "auto")
+                ?.addQueryParameter("tl", targetLang.trim())
+                ?.build()
+                ?: return null
             val formBody = FormBody.Builder()
                 .add("q", textBlock)
                 .build()
             val request = Request.Builder()
-                .url("https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl=$targetLang")
+                .url(url)
                 .header("User-Agent", "Mozilla/5.0")
                 .post(formBody)
                 .build()
@@ -162,7 +196,7 @@ object CloudTranslator {
         var charCount = 0
 
         for (line in lines) {
-            val len = line.originalText.length + 1
+            val len = normalizeLyricText(line.originalText).length + 8
             if (current.isNotEmpty() && charCount + len > maxChars) {
                 chunks.add(current)
                 current = mutableListOf()

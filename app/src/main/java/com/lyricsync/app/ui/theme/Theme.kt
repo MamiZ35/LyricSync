@@ -18,7 +18,7 @@ private val DarkPalette = darkColorScheme(
     onPrimary = Color(0xFF090D16),
     onBackground = Color(0xFFF8FAFC),
     onSurface = Color(0xFFF1F5F9),
-    onSurfaceVariant = Color(0xFF94A3B8)
+    onSurfaceVariant = Color(0xFFCBD5E1)
 )
 
 private val AmoledPalette = darkColorScheme(
@@ -31,11 +31,11 @@ private val AmoledPalette = darkColorScheme(
     onPrimary = Color.Black,
     onBackground = Color.White,
     onSurface = Color(0xFFF1F5F9),
-    onSurfaceVariant = Color(0xFF94A3B8)
+    onSurfaceVariant = Color(0xFFCBD5E1)
 )
 
 private val LightPalette = lightColorScheme(
-    primary = Color(0xFF0284C7),
+    primary = Color(0xFF0369A1),
     secondary = Color(0xFF4F46E5),
     tertiary = Color(0xFF059669),
     background = Color(0xFFF8FAFC),
@@ -44,7 +44,7 @@ private val LightPalette = lightColorScheme(
     onPrimary = Color.White,
     onBackground = Color(0xFF0F172A),
     onSurface = Color(0xFF0F172A),
-    onSurfaceVariant = Color(0xFF475569)
+    onSurfaceVariant = Color(0xFF1E293B)
 )
 
 @Composable

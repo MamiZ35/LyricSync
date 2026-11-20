@@ -37,6 +37,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BrightnessHigh
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Fullscreen
@@ -109,6 +110,7 @@ import com.lyricsync.app.domain.ThemeMode
 import com.lyricsync.app.domain.TranslationEngine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 private val SUPPORTED_TARGET_LANGUAGES = listOf(
     TranslateLanguage.TURKISH to "Türkçe (TR)",
@@ -147,6 +149,8 @@ fun MainScreen(
     onSetAutoLaunchSpotify: (Boolean) -> Unit,
     onLaunchSpotify: () -> Unit,
     onSetLoopRange: (LoopRange?) -> Unit,
+    onAdjustSyncOffset: (Long) -> Unit,
+    onResetSyncOffset: () -> Unit,
     onSelectTargetLanguage: (String) -> Unit,
     onSelectDisplayMode: (LyricDisplayMode) -> Unit,
     onSelectTranslationEngine: (TranslationEngine) -> Unit,
@@ -340,8 +344,12 @@ fun MainScreen(
                     displayMode = displayMode,
                     isOverlayActive = isOverlayActive,
                     keepScreenOn = keepScreenOn,
+                    syncOffsetMs = lyricsState.syncOffsetMs,
+                    showSyncOffset = lyricsState.isSynced && lyricsState.lines.isNotEmpty(),
                     onToggleKeepScreenOn = onToggleKeepScreenOn,
                     onEnterAmbient = { isAmbientFullscreen = true },
+                    onAdjustSyncOffset = onAdjustSyncOffset,
+                    onResetSyncOffset = onResetSyncOffset,
                     onSelectTargetLanguage = onSelectTargetLanguage,
                     onSelectDisplayMode = onSelectDisplayMode,
                     onToggleOverlay = onToggleOverlay,
@@ -764,8 +772,12 @@ private fun TopHeaderBar(
     displayMode: LyricDisplayMode,
     isOverlayActive: Boolean,
     keepScreenOn: Boolean,
+    syncOffsetMs: Long,
+    showSyncOffset: Boolean,
     onToggleKeepScreenOn: () -> Unit,
     onEnterAmbient: () -> Unit,
+    onAdjustSyncOffset: (Long) -> Unit,
+    onResetSyncOffset: () -> Unit,
     onSelectTargetLanguage: (String) -> Unit,
     onSelectDisplayMode: (LyricDisplayMode) -> Unit,
     onToggleOverlay: () -> Unit,
@@ -1021,6 +1033,62 @@ private fun TopHeaderBar(
                     color = MaterialTheme.colorScheme.onSurface
                 )
             }
+
+            if (showSyncOffset) {
+                val offsetSec = syncOffsetMs / 1000.0
+                val offsetLabel = when {
+                    syncOffsetMs == 0L -> "Senkron: 0.0s"
+                    syncOffsetMs > 0L -> String.format(Locale.US, "Senkron: +%.1fs", offsetSec)
+                    else -> String.format(Locale.US, "Senkron: %.1fs", offsetSec)
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (syncOffsetMs != 0L) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        )
+                        .padding(horizontal = 4.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = "-0.5s",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClickLabel = "Sözleri 0.5 saniye geri al") {
+                                onAdjustSyncOffset(-500L)
+                            }
+                            .padding(horizontal = 7.dp, vertical = 4.dp)
+                    )
+                    Text(
+                        text = offsetLabel,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClickLabel = "Senkron kaydırmayı sıfırla") {
+                                onResetSyncOffset()
+                            }
+                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                    )
+                    Text(
+                        text = "+0.5s",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClickLabel = "Sözleri 0.5 saniye ileri al") {
+                                onAdjustSyncOffset(500L)
+                            }
+                            .padding(horizontal = 7.dp, vertical = 4.dp)
+                    )
+                }
+            }
         }
     }
 }
@@ -1086,35 +1154,37 @@ private fun TrackSeekSlider(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                IconButton(onClick = onSkipPrevious, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = onSkipPrevious, modifier = Modifier.size(38.dp)) {
                     Icon(
                         imageVector = Icons.Default.SkipPrevious,
                         contentDescription = "Önceki",
                         tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
                 Box(
                     modifier = Modifier
-                        .size(34.dp)
+                        .size(42.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
-                        .clickable { onPlayPauseToggle() },
+                        .clickable(onClickLabel = if (isPlaying) "Duraklat" else "Oynat") {
+                            onPlayPauseToggle()
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                         contentDescription = if (isPlaying) "Duraklat" else "Oynat",
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
-                IconButton(onClick = onSkipNext, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = onSkipNext, modifier = Modifier.size(38.dp)) {
                     Icon(
                         imageVector = Icons.Default.SkipNext,
                         contentDescription = "Sonraki",
                         tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }
@@ -1408,15 +1478,15 @@ private fun LyricLineRow(
     val originalColor = when {
         !isSynced -> MaterialTheme.colorScheme.onSurface
         isActive -> MaterialTheme.colorScheme.onBackground
-        isPast -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f)
-        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f)
+        isPast -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f)
+        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
     }
 
     val translationColor = when {
-        !isSynced -> MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
+        !isSynced -> MaterialTheme.colorScheme.primary.copy(alpha = 0.92f)
         isActive -> MaterialTheme.colorScheme.primary
-        isPast -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.62f)
+        isPast -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f)
     }
 
     val hasTranslation = line.translatedText.isNotBlank() && line.translatedText != line.originalText
@@ -1454,6 +1524,8 @@ private fun LyricLineRow(
                 }
             )
             .combinedClickable(
+                onClickLabel = if (canSeek) "Bu satıra sar" else null,
+                onLongClickLabel = "Söz işlemleri ve paylaşım",
                 onClick = { if (canSeek) onSeek() },
                 onLongClick = { onLongPress() }
             )
@@ -1633,6 +1705,7 @@ private fun LibraryAndStatsDialog(
     var summaries by remember { mutableStateOf<List<CachedSongSummary>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var favoritesOnly by remember { mutableStateOf(false) }
+    var librarySearchQuery by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
     fun reload() {
@@ -1667,8 +1740,17 @@ private fun LibraryAndStatsDialog(
             .take(3)
             .joinToString(", ") { "${it.key} (${it.value})" }
     }
-    val displayed = remember(summaries, favoritesOnly) {
-        if (favoritesOnly) summaries.filter { it.isFavorite } else summaries
+    val displayed = remember(summaries, favoritesOnly, librarySearchQuery) {
+        val base = if (favoritesOnly) summaries.filter { it.isFavorite } else summaries
+        val q = librarySearchQuery.trim()
+        if (q.isEmpty()) {
+            base
+        } else {
+            base.filter {
+                it.trackName.contains(q, ignoreCase = true) ||
+                    it.artistName.contains(q, ignoreCase = true)
+            }
+        }
     }
 
     AlertDialog(
@@ -1766,6 +1848,36 @@ private fun LibraryAndStatsDialog(
                     }
                 }
 
+                OutlinedTextField(
+                    value = librarySearchQuery,
+                    onValueChange = { librarySearchQuery = it },
+                    placeholder = { Text("Kütüphanede şarkı veya sanatçı ara...", fontSize = 12.sp) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    trailingIcon = {
+                        if (librarySearchQuery.isNotEmpty()) {
+                            IconButton(
+                                onClick = { librarySearchQuery = "" },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Aramayı Temizle",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
                 when {
                     isLoading -> {
                         Box(
@@ -1779,7 +1891,11 @@ private fun LibraryAndStatsDialog(
                     }
                     displayed.isEmpty() -> {
                         Text(
-                            text = if (favoritesOnly) "Henüz favori şarkınız yok." else "Henüz çevrilmiş şarkı bulunmuyor.",
+                            text = when {
+                                librarySearchQuery.isNotBlank() -> "Aramanızla eşleşen şarkı bulunamadı."
+                                favoritesOnly -> "Henüz favori şarkınız yok."
+                                else -> "Henüz çevrilmiş şarkı bulunmuyor."
+                            },
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(vertical = 16.dp)
@@ -1825,7 +1941,7 @@ private fun LibraryAndStatsDialog(
                                                 reload()
                                             }
                                         },
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(40.dp)
                                     ) {
                                         Icon(
                                             imageVector = if (item.isFavorite) Icons.Default.Star else Icons.Default.StarBorder,

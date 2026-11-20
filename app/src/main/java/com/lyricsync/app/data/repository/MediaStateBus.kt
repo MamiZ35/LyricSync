@@ -71,6 +71,9 @@ object MediaStateBus {
     private val _isOverlayActive = MutableStateFlow(false)
     val isOverlayActive: StateFlow<Boolean> = _isOverlayActive.asStateFlow()
 
+    private val _isAppInForeground = MutableStateFlow(false)
+    val isAppInForeground: StateFlow<Boolean> = _isAppInForeground.asStateFlow()
+
     // Transport control hooks populated by MediaNotificationListenerService
     var onPlayPauseToggle: (() -> Unit)? = null
     var onSeekToMs: ((Long) -> Unit)? = null
@@ -200,12 +203,23 @@ object MediaStateBus {
         _isOverlayActive.value = active
     }
 
+    fun setAppInForeground(inForeground: Boolean) {
+        _isAppInForeground.value = inForeground
+    }
+
+    fun setSyncOffsetMs(offsetMs: Long) {
+        val clamped = offsetMs.coerceIn(-15_000L, 15_000L)
+        _lyricsState.value = _lyricsState.value.copy(syncOffsetMs = clamped)
+        recalculateActiveLine(_trackState.value.positionMs)
+    }
+
     private fun recalculateActiveLine(positionMs: Long) {
         val lyrics = _lyricsState.value
         val newIndex = LrcParser.findActiveLineIndex(
             lines = lyrics.lines,
             positionMs = positionMs,
-            isSynced = lyrics.isSynced
+            isSynced = lyrics.isSynced,
+            syncOffsetMs = lyrics.syncOffsetMs
         )
         if (_activeLineIndex.value != newIndex) {
             _activeLineIndex.value = newIndex

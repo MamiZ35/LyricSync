@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MediaStateBus.init(applicationContext)
-        repository = LyricsRepository(applicationContext)
+        repository = LyricsRepository.getInstance(applicationContext)
 
         setContent {
             var hasNotificationAccess by remember {
@@ -92,36 +92,46 @@ class MainActivity : ComponentActivity() {
             val lifecycleOwner = LocalLifecycleOwner.current
             DisposableEffect(lifecycleOwner) {
                 val observer = LifecycleEventObserver { _, event ->
-                    if (event == Lifecycle.Event.ON_RESUME) {
-                        val notifGranted = isNotificationServiceEnabled(this@MainActivity)
-                        val overlayGranted = Settings.canDrawOverlays(this@MainActivity)
-                        hasNotificationAccess = notifGranted
-                        hasOverlayPermission = overlayGranted
-                        if (notifGranted) {
-                            runCatching {
-                                NotificationListenerService.requestRebind(
-                                    ComponentName(
-                                        this@MainActivity,
-                                        MediaNotificationListenerService::class.java
+                    when (event) {
+                        Lifecycle.Event.ON_RESUME -> {
+                            MediaStateBus.setAppInForeground(true)
+                            val notifGranted = isNotificationServiceEnabled(this@MainActivity)
+                            val overlayGranted = Settings.canDrawOverlays(this@MainActivity)
+                            hasNotificationAccess = notifGranted
+                            hasOverlayPermission = overlayGranted
+                            if (notifGranted) {
+                                runCatching {
+                                    NotificationListenerService.requestRebind(
+                                        ComponentName(
+                                            this@MainActivity,
+                                            MediaNotificationListenerService::class.java
+                                        )
                                     )
-                                )
+                                }
+                            }
+                            if (notifGranted && overlayGranted) {
+                                onboardingCompleted = true
+                            }
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                                packageManager.canRequestPackageInstalls()
+                            ) {
+                                pendingInstallApkFile?.let { file ->
+                                    pendingInstallApkFile = null
+                                    installDownloadedApk(file)
+                                }
                             }
                         }
-                        if (notifGranted && overlayGranted) {
-                            onboardingCompleted = true
+                        Lifecycle.Event.ON_PAUSE -> {
+                            MediaStateBus.setAppInForeground(false)
                         }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                            packageManager.canRequestPackageInstalls()
-                        ) {
-                            pendingInstallApkFile?.let { file ->
-                                pendingInstallApkFile = null
-                                installDownloadedApk(file)
-                            }
-                        }
+                        else -> Unit
                     }
                 }
                 lifecycleOwner.lifecycle.addObserver(observer)
-                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                onDispose {
+                    MediaStateBus.setAppInForeground(false)
+                    lifecycleOwner.lifecycle.removeObserver(observer)
+                }
             }
 
             val trackState by MediaStateBus.trackState.collectAsState()
@@ -215,6 +225,17 @@ class MainActivity : ComponentActivity() {
                         },
                         onSetLoopRange = { range ->
                             MediaStateBus.setLoopRange(range)
+                        },
+                        onAdjustSyncOffset = { deltaMs ->
+                            val newOffset = (lyricsState.syncOffsetMs + deltaMs).coerceIn(-15_000L, 15_000L)
+                            coroutineScope.launch {
+                                repository.updateSyncOffset(trackState, newOffset)
+                            }
+                        },
+                        onResetSyncOffset = {
+                            coroutineScope.launch {
+                                repository.updateSyncOffset(trackState, 0L)
+                            }
                         },
                         onSelectTargetLanguage = { langCode ->
                             MediaStateBus.setTargetLanguage(langCode)

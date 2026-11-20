@@ -56,7 +56,11 @@ class MediaNotificationListenerService : NotificationListenerService() {
         override fun onPlaybackStateChanged(state: PlaybackState?) {
             // Fires immediately on Play, Pause, and Seek (ileri/geri sarma)
             syncCurrentControllerState()
-            if (state?.state != PlaybackState.STATE_PLAYING) {
+            if (state?.state == PlaybackState.STATE_PLAYING) {
+                startPositionTicker()
+            } else {
+                positionTickerJob?.cancel()
+                positionTickerJob = null
                 refreshSessions()
             }
         }
@@ -69,7 +73,7 @@ class MediaNotificationListenerService : NotificationListenerService() {
     override fun onCreate() {
         super.onCreate()
         MediaStateBus.init(applicationContext)
-        repository = LyricsRepository(applicationContext)
+        repository = LyricsRepository.getInstance(applicationContext)
         mediaSessionManager =
             getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
 
@@ -145,6 +149,23 @@ class MediaNotificationListenerService : NotificationListenerService() {
                 }
             }
         }
+
+        // Refresh active controller position and precision when UI or overlay becomes active
+        serviceScope.launch {
+            combine(
+                MediaStateBus.isAppInForeground,
+                MediaStateBus.isOverlayActive
+            ) { inFg, overlayActive -> inFg || overlayActive }
+                .distinctUntilChanged()
+                .collectLatest { active ->
+                    if (active) {
+                        syncCurrentControllerState()
+                        if (activeController?.playbackState?.state == PlaybackState.STATE_PLAYING) {
+                            startPositionTicker()
+                        }
+                    }
+                }
+        }
     }
 
     override fun onListenerConnected() {
@@ -157,7 +178,9 @@ class MediaNotificationListenerService : NotificationListenerService() {
             )
             refreshSessions()
         }
-        startPositionTicker()
+        if (activeController?.playbackState?.state == PlaybackState.STATE_PLAYING) {
+            startPositionTicker()
+        }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -222,10 +245,13 @@ class MediaNotificationListenerService : NotificationListenerService() {
             activeController = chosen
             chosen.registerCallback(controllerCallback)
         }
-        if (positionTickerJob?.isActive != true) {
-            startPositionTicker()
-        }
         syncCurrentControllerState()
+        if (chosen.playbackState?.state == PlaybackState.STATE_PLAYING) {
+            startPositionTicker()
+        } else {
+            positionTickerJob?.cancel()
+            positionTickerJob = null
+        }
     }
 
     private fun syncCurrentControllerState() {
@@ -283,16 +309,13 @@ class MediaNotificationListenerService : NotificationListenerService() {
     }
 
     private fun startPositionTicker() {
-        positionTickerJob?.cancel()
+        if (positionTickerJob?.isActive == true) return
         positionTickerJob = serviceScope.launch {
-            var idleTicks = 0
-            while (isActive) {
-                val controller = activeController
-                val state = controller?.playbackState
-                var isCurrentlyPlaying = false
-                if (controller != null && state != null) {
+            try {
+                while (isActive) {
+                    val controller = activeController ?: break
+                    val state = controller.playbackState ?: break
                     val isPlaying = state.state == PlaybackState.STATE_PLAYING
-                    isCurrentlyPlaying = isPlaying
                     val duration = MediaStateBus.trackState.value.durationMs
                     var pos = computeCurrentPosition(state, duration)
 
@@ -307,18 +330,17 @@ class MediaNotificationListenerService : NotificationListenerService() {
 
                     MediaStateBus.updatePosition(pos, isPlaying)
                     if (!isPlaying) {
-                        idleTicks++
-                    } else {
-                        idleTicks = 0
+                        // Event-driven: sleep completely when paused/stopped; callbacks restart ticker on play
+                        break
                     }
-                } else {
-                    idleTicks++
+
+                    val needHighPrecision = MediaStateBus.isAppInForeground.value ||
+                        MediaStateBus.isOverlayActive.value ||
+                        activeLoop != null
+                    delay(if (needHighPrecision) 100L else 1000L)
                 }
-                if (idleTicks >= 5) {
-                    idleTicks = 0
-                    refreshSessions()
-                }
-                delay(if (isCurrentlyPlaying) 100L else 400L)
+            } finally {
+                positionTickerJob = null
             }
         }
     }
@@ -343,6 +365,8 @@ class MediaNotificationListenerService : NotificationListenerService() {
     }
 
     private fun cleanupController() {
+        positionTickerJob?.cancel()
+        positionTickerJob = null
         activeController?.unregisterCallback(controllerCallback)
         activeController = null
         lastSyncedControllerTrackId = ""

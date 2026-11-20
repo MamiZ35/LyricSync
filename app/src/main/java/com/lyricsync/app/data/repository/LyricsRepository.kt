@@ -29,12 +29,23 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
-class LyricsRepository(context: Context) {
+class LyricsRepository private constructor(context: Context) {
 
-    private val dao = LyricsDatabase.getInstance(context).lyricsDao()
+    private val dao = LyricsDatabase.getInstance(context.applicationContext).lyricsDao()
     private val api = LrcLibApi.instance
     private val gson = Gson()
     private val lineListType = object : TypeToken<List<LyricLine>>() {}.type
+
+    companion object {
+        @Volatile
+        private var INSTANCE: LyricsRepository? = null
+
+        fun getInstance(context: Context): LyricsRepository {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: LyricsRepository(context.applicationContext).also { INSTANCE = it }
+            }
+        }
+    }
 
     suspend fun loadAndTranslateLyrics(
         track: MediaTrackState,
@@ -66,6 +77,7 @@ class LyricsRepository(context: Context) {
                             isSynced = cached.isSynced,
                             sourceLang = cached.sourceLang,
                             targetLang = cached.targetLang,
+                            syncOffsetMs = cached.syncOffsetMs,
                             isLoading = false,
                             isFromCache = true
                         )
@@ -136,6 +148,13 @@ class LyricsRepository(context: Context) {
             return@withContext
         }
 
+        val preservedOffset = safeCatching { dao.getByKey(cacheKey)?.syncOffsetMs }.getOrNull()
+            ?: if (MediaStateBus.lyricsState.value.trackId == trackId) {
+                MediaStateBus.lyricsState.value.syncOffsetMs
+            } else {
+                0L
+            }
+
         // Emit original lyrics immediately so synced scrolling starts without waiting for translation
         publishIfCurrentTrack(
             trackId,
@@ -144,6 +163,7 @@ class LyricsRepository(context: Context) {
                 lines = parsedLines,
                 isSynced = isSynced,
                 targetLang = targetLang,
+                syncOffsetMs = preservedOffset,
                 isLoading = false,
                 statusMessage = if (engine == TranslationEngine.CLOUD_CONTEXT) {
                     "Şarkı sözleri bağlamsal bulut motoruyla çevriliyor..."
@@ -170,6 +190,7 @@ class LyricsRepository(context: Context) {
                         isSynced = isSynced,
                         sourceLang = detectedLang,
                         targetLang = targetLang,
+                        syncOffsetMs = preservedOffset,
                         isLoading = false,
                         isDownloadingModel = false,
                         isFromCache = false,
@@ -215,6 +236,7 @@ class LyricsRepository(context: Context) {
                 isSynced = isSynced,
                 sourceLang = sourceLang,
                 targetLang = targetLang,
+                syncOffsetMs = preservedOffset,
                 isLoading = false,
                 statusMessage = null
             )
@@ -295,6 +317,7 @@ class LyricsRepository(context: Context) {
                     isSynced = isSynced,
                     sourceLang = sourceLang,
                     targetLang = targetLang,
+                    syncOffsetMs = preservedOffset,
                     isLoading = false,
                     isDownloadingModel = false,
                     isFromCache = false,
@@ -373,14 +396,29 @@ class LyricsRepository(context: Context) {
                 isSynced = entity.isSynced,
                 sourceLang = entity.sourceLang,
                 targetLang = entity.targetLang,
+                syncOffsetMs = entity.syncOffsetMs,
                 isLoading = false,
                 isFromCache = true
             )
         )
     }
 
+    suspend fun updateSyncOffset(track: MediaTrackState, offsetMs: Long) = withContext(Dispatchers.IO) {
+        val clamped = offsetMs.coerceIn(-15_000L, 15_000L)
+        MediaStateBus.setSyncOffsetMs(clamped)
+        if (track.hasActiveTrack) {
+            safeCatching {
+                dao.updateSyncOffsetForTrack(
+                    artistName = track.artistName.trim(),
+                    trackName = track.trackName.trim(),
+                    offsetMs = clamped
+                )
+            }
+        }
+    }
+
     suspend fun clearCache() = withContext(Dispatchers.IO) {
-        safeCatching { dao.clearAll() }
+        safeCatching { dao.clearNonFavorites() }
     }
 
     suspend fun getDownloadedModels(): List<String> = withContext(Dispatchers.IO) {
@@ -425,13 +463,17 @@ class LyricsRepository(context: Context) {
             }
         }
 
-        // Fallback: /api/search if Spotify duration differs slightly or track has remaster suffix
+        // Fallback: /api/search if Spotify duration differs slightly or track has remaster/explicit/feat suffix
         return safeCatching {
-            val cleanTrack = trackName.substringBefore(" - ").substringBefore(" (").trim()
-            val results = if (artistName.isNotBlank()) {
+            val cleanTrack = LrcParser.cleanTrackTitleForSearch(trackName)
+            val cleanArtist = LrcParser.cleanArtistForSearch(artistName)
+            var results = if (artistName.isNotBlank()) {
                 api.searchLyrics(artistName = artistName, trackName = cleanTrack)
             } else {
                 api.searchLyrics(query = cleanTrack)
+            }
+            if (results.isEmpty() && cleanArtist.isNotBlank() && cleanArtist != artistName) {
+                results = api.searchLyrics(artistName = cleanArtist, trackName = cleanTrack)
             }
             results.sortedWith(
                 compareByDescending<LrcLibResponse> { !it.syncedLyrics.isNullOrBlank() }
@@ -470,6 +512,7 @@ class LyricsRepository(context: Context) {
             isSynced = cached.isSynced,
             sourceLang = cached.sourceLang,
             targetLang = cached.targetLang,
+            syncOffsetMs = cached.syncOffsetMs,
             isLoading = false,
             isFromCache = true
         )
@@ -484,7 +527,13 @@ class LyricsRepository(context: Context) {
         lines: List<LyricLine>
     ) {
         safeCatching {
-            val existingFav = dao.getByKey(cacheKey)?.isFavorite ?: false
+            val existing = dao.getByKey(cacheKey)
+            val existingFav = existing?.isFavorite ?: false
+            val existingOffset = existing?.syncOffsetMs ?: if (MediaStateBus.lyricsState.value.trackId == track.trackId) {
+                MediaStateBus.lyricsState.value.syncOffsetMs
+            } else {
+                0L
+            }
             dao.insert(
                 CachedLyricsEntity(
                     cacheKey = cacheKey,
@@ -494,7 +543,8 @@ class LyricsRepository(context: Context) {
                     targetLang = targetLang,
                     isSynced = isSynced,
                     linesJson = gson.toJson(lines),
-                    isFavorite = existingFav
+                    isFavorite = existingFav,
+                    syncOffsetMs = existingOffset
                 )
             )
             dao.pruneLeastRecentlyUsed(maxEntries = 500)

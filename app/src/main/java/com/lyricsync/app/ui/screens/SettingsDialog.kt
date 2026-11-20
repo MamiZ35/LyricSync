@@ -644,9 +644,10 @@ private fun TranslationSettingsTab(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "Önbellekte $cachedCount şarkı",
+                text = "Önbellekte $cachedCount şarkı (Favoriler korunur)",
                 fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
             )
             OutlinedButton(
                 onClick = onClearCache,
@@ -693,7 +694,7 @@ private fun TranslationSettingsTab(
                         )
                         IconButton(
                             onClick = { onDeleteModel(langCode) },
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier.size(36.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Delete,

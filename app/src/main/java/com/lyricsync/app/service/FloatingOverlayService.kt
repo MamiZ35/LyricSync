@@ -180,8 +180,11 @@ class FloatingOverlayService : Service(),
             setContent {
                 FloatingSubtitleOverlayContent(
                     onDrag = { dx, dy ->
-                        windowParams.x += dx.roundToInt()
-                        windowParams.y = (windowParams.y + dy.roundToInt()).coerceAtLeast(0)
+                        val dm = resources.displayMetrics
+                        val maxAbsX = (dm.widthPixels / 2).coerceAtLeast(120)
+                        val maxY = (dm.heightPixels - 120).coerceAtLeast(200)
+                        windowParams.x = (windowParams.x + dx.roundToInt()).coerceIn(-maxAbsX, maxAbsX)
+                        windowParams.y = (windowParams.y + dy.roundToInt()).coerceIn(0, maxY)
                         runCatching {
                             windowManager?.updateViewLayout(this, windowParams)
                         }
@@ -318,6 +321,7 @@ private fun FloatingSubtitleOverlayContent(
     val autoHideOnPause by MediaStateBus.autoHideOverlayOnPause.collectAsState()
     var isCollapsed by remember { mutableStateOf(false) }
     var isAutoHidden by remember { mutableStateOf(false) }
+    var lastNotifiedLockState by remember { mutableStateOf(overlayConfig.isTouchLocked) }
 
     LaunchedEffect(trackState.isPlaying, trackState.hasActiveTrack, autoHideOnPause) {
         if (autoHideOnPause && trackState.hasActiveTrack && !trackState.isPlaying) {
@@ -329,7 +333,10 @@ private fun FloatingSubtitleOverlayContent(
     }
 
     LaunchedEffect(overlayConfig.isTouchLocked) {
-        onTouchLockChanged(overlayConfig.isTouchLocked)
+        if (overlayConfig.isTouchLocked != lastNotifiedLockState) {
+            lastNotifiedLockState = overlayConfig.isTouchLocked
+            onTouchLockChanged(overlayConfig.isTouchLocked)
+        }
     }
 
     if (isAutoHidden) {
@@ -463,7 +470,7 @@ private fun FloatingSubtitleOverlayContent(
 
                     Box(
                         modifier = Modifier
-                            .size(22.dp)
+                            .size(30.dp)
                             .clip(CircleShape)
                             .background(
                                 if (overlayConfig.isTouchLocked) Color(0x44FBBF24) else Color(0x33FFFFFF)
@@ -475,7 +482,7 @@ private fun FloatingSubtitleOverlayContent(
                             imageVector = if (overlayConfig.isTouchLocked) Icons.Default.Lock else Icons.Default.LockOpen,
                             contentDescription = if (overlayConfig.isTouchLocked) "Kilidi Aç" else "Konumu Kilitle",
                             tint = if (overlayConfig.isTouchLocked) Color(0xFFFBBF24) else Color.White,
-                            modifier = Modifier.size(12.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                     }
 
@@ -484,7 +491,7 @@ private fun FloatingSubtitleOverlayContent(
 
                         Box(
                             modifier = Modifier
-                                .size(22.dp)
+                                .size(30.dp)
                                 .clip(CircleShape)
                                 .background(Color(0x33FFFFFF))
                                 .clickable { onClose() },
@@ -494,7 +501,7 @@ private fun FloatingSubtitleOverlayContent(
                                 imageVector = Icons.Default.Close,
                                 contentDescription = "Kapat",
                                 tint = Color.White,
-                                modifier = Modifier.size(13.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                         }
                     }
@@ -621,7 +628,7 @@ private fun FloatingSubtitleOverlayContent(
                                         )
                                     )
                                 }
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -634,7 +641,7 @@ private fun FloatingSubtitleOverlayContent(
 
                         Box(
                             modifier = Modifier
-                                .size(26.dp)
+                                .size(34.dp)
                                 .clip(CircleShape)
                                 .background(Color(0x22FFFFFF))
                                 .clickable { MediaStateBus.onSkipPrevious?.invoke() },
@@ -644,13 +651,13 @@ private fun FloatingSubtitleOverlayContent(
                                 imageVector = Icons.Default.SkipPrevious,
                                 contentDescription = "Önceki",
                                 tint = Color.White,
-                                modifier = Modifier.size(15.dp)
+                                modifier = Modifier.size(18.dp)
                             )
                         }
 
                         Box(
                             modifier = Modifier
-                                .size(28.dp)
+                                .size(38.dp)
                                 .clip(CircleShape)
                                 .background(Color(0x4438BDF8))
                                 .clickable { MediaStateBus.onPlayPauseToggle?.invoke() },
@@ -660,13 +667,13 @@ private fun FloatingSubtitleOverlayContent(
                                 imageVector = if (trackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                 contentDescription = if (trackState.isPlaying) "Duraklat" else "Oynat",
                                 tint = Color.White,
-                                modifier = Modifier.size(17.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
 
                         Box(
                             modifier = Modifier
-                                .size(26.dp)
+                                .size(34.dp)
                                 .clip(CircleShape)
                                 .background(Color(0x22FFFFFF))
                                 .clickable { MediaStateBus.onSkipNext?.invoke() },
@@ -676,7 +683,7 @@ private fun FloatingSubtitleOverlayContent(
                                 imageVector = Icons.Default.SkipNext,
                                 contentDescription = "Sonraki",
                                 tint = Color.White,
-                                modifier = Modifier.size(15.dp)
+                                modifier = Modifier.size(18.dp)
                             )
                         }
 
@@ -691,7 +698,7 @@ private fun FloatingSubtitleOverlayContent(
                                         )
                                     )
                                 }
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(

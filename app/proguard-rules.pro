@@ -1,2 +1,9 @@
+-keepattributes Signature, InnerClasses, EnclosingMethod, *Annotation*
 -keep class com.lyricsync.app.data.remote.** { *; }
+-keep class com.lyricsync.app.data.local.** { *; }
 -keep class com.lyricsync.app.domain.** { *; }
+-keep class * extends com.google.gson.reflect.TypeToken
+-keep class com.google.mlkit.** { *; }
+-keep class com.google.android.gms.** { *; }
+-dontwarn okhttp3.**
+-dontwarn retrofit2.**

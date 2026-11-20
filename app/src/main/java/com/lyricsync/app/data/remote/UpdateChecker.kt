@@ -148,6 +148,15 @@ object UpdateChecker {
                     return@withContext null
                 }
 
+                @Suppress("DEPRECATION")
+                val archiveInfo = runCatching {
+                    context.packageManager.getPackageArchiveInfo(tmpFile.absolutePath, 0)
+                }.getOrNull()
+                if (archiveInfo == null || archiveInfo.packageName != context.packageName) {
+                    tmpFile.delete()
+                    return@withContext null
+                }
+
                 if (outFile.exists()) outFile.delete()
                 if (!tmpFile.renameTo(outFile)) {
                     tmpFile.copyTo(outFile, overwrite = true)
