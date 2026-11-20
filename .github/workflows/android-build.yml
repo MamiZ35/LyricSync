@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - 'README.md'
   workflow_dispatch:
 
 permissions:
@@ -50,3 +52,15 @@ jobs:
           body: "Otomatik derlenen güncel LyricSync Android APK sürümü (v1.2.${{ github.run_number }})."
           files: LyricSync.apk
           make_latest: true
+
+      - name: Prune Old Releases (Keep Latest Only)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_TAG: v1.2.${{ github.run_number }}
+        run: |
+          for tag in $(gh release list --limit 100 --json tagName --jq '.[].tagName'); do
+            if [ "$tag" != "$CURRENT_TAG" ]; then
+              echo "Deleting old release: $tag"
+              gh release delete "$tag" --cleanup-tag --yes || true
+            fi
+          done

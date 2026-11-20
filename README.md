@@ -1,32 +1,64 @@
-# LyricSync Çeviri — Gerçek Zamanlı Şarkı Sözü & Çeviri Uygulaması
+<div align="center">
 
-Spotify ve diğer müzik uygulamalarından çalan şarkıları anlık olarak takip eden, LRCLIB üzerinden senkronize (`.lrc`) sözleri çeken ve tüm şarkıyı bağlamıyla anında çeviren Android (Kotlin + Jetpack Compose) uygulaması.
+# 🎵 LyricSync
+
+**Spotify ve medya oynatıcılar için gerçek zamanlı senkronize şarkı sözü, bağlamsal çeviri ve yüzen altyazı uygulaması**
+
+[![Android CI](https://github.com/MamiZ35/LyricSync/actions/workflows/android-build.yml/badge.svg)](https://github.com/MamiZ35/LyricSync/actions/workflows/android-build.yml)
+[![Latest Release](https://img.shields.io/github/v/release/MamiZ35/LyricSync?label=Son%20S%C3%BCr%C3%BCm&color=0284C7)](https://github.com/MamiZ35/LyricSync/releases/latest)
+[![Download APK](https://img.shields.io/badge/APK%20%C4%B0ndir-LyricSync.apk-10B981?style=flat&logo=android&logoColor=white)](https://github.com/MamiZ35/LyricSync/releases/latest/download/LyricSync.apk)
+![Android](https://img.shields.io/badge/Android-8.0%2B%20(API%2026%2B)-3DDC84?logo=android&logoColor=white)
+![Tech](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?logo=kotlin&logoColor=white)
+
+</div>
 
 ---
 
-## 📱 APK İndir (Telefon İçin Tek Tık)
+## 📱 Telefona Kurulum (Tek Tık)
 
-> **[⬇️ Son Sürüm APK İndir (LyricSync.apk)](https://github.com/MamiZ35/LyricSync/releases/latest/download/LyricSync.apk)**
+> **[⬇️ Son Sürüm APK İndir (`LyricSync.apk`)](https://github.com/MamiZ35/LyricSync/releases/latest/download/LyricSync.apk)**
 >
-> Tüm sürümleri görmek için: **[Releases Sayfası](https://github.com/MamiZ35/LyricSync/releases/latest)**
+> 🔗 **[Son Sürüm Sayfasını Aç](https://github.com/MamiZ35/LyricSync/releases/latest)**
 
-*(Tüm sürümler aynı imza anahtarıyla ve artan sürüm numarasıyla derlendiği için yeni güncellemeleri eskisini silmeden doğrudan üzerine kurabilirsiniz.)*
+- **Sürüm Yükseltme:** Tüm sürümler aynı imza anahtarıyla ve otomatik artan sürüm numarasıyla (`versionCode`) derlenir. Yeni sürümleri eskisini silmeden doğrudan üzerine kurabilir veya uygulama içinden **Ayarlar → 🚀 Güncelleme → İndir & Kur** adımıyla güncelleyebilirsiniz.
 
 ---
 
 ## ✨ Özellikler
-- **Canlı Medya Takibi:** `NotificationListenerService` ve `MediaSessionManager` ile şarkı adı, sanatçı, albüm kapağı, toplam süre ve anlık saniye takibi.
-- **Bağlamsal Bulut Çevirisi + Çevrimdışı ML Kit Yedeği:** Şarkıyı satır satır parçalamak yerine tam bağlamıyla ~0.3 sn'de çevirir; internet yokken argo-düzeltilmiş cihaz içi Google ML Kit'e düşer.
-- **Yüzen Altyazı Penceresi (Floating Overlay):** Spotify üstünde çalışan, sürüklenebilir, opaklığı ve yazı boyutu ayarlanabilen, tek dokunuşla kilitlenebilir (click-through) mini pencere.
-- **Akıllı Liste & Kontroller:**
-  - Çalan satıra otomatik odaklanma ve elle kaydırınca 4.5 sn duraklayıp **"🎯 Aktif Satıra Dön"** butonu gösterme.
-  - Satıra **kısa dokununca** şarkıyı o saniyeye sarma, **uzun basınca** kopyalama ve paylaşma.
-  - Uygulama içi tek tıkla güncelleme kontrolü ve manuel şarkı sözü arama.
+
+| Modül | Özellikler |
+| :--- | :--- |
+| **🎧 Canlı Medya Takibi** | `NotificationListenerService` ve `MediaSessionManager` ile Spotify vb. çalarlardan şarkı adı, sanatçı, albüm kapağı, toplam süre ve anlık milisaniye takibi; ana kartta etkileşimli ileri/geri sarma çubuğu ve oynatma kontrolleri. |
+| **🌐 Bağlamsal & Çevrimdışı Çeviri** | **Bulut Bağlamsal Motor** tüm şarkıyı tek seferde ~0.3 sn'de çevirir; internet yokken argo düzeltmeli cihaz içi **Google ML Kit** motoruna düşer (Wi-Fi önceliği destekli). |
+| **🪟 Yüzen Pencere (Overlay)** | Diğer uygulamaların üstünde çalışan sürüklenebilir mini pencere; canlı önizlemeli boyut/opaklık ayarı, sıradaki satır önizlemesi (`▸`), müzik durunca otomatik gizlenme, hızlı kontroller (`A-`/`⏮`/`⏯`/`⏭`/`A+`) ve kilitle/aç düğmesi. |
+| **🌌 Ambiyans Modu** | Albüm kapağından çekilen dominant renk geçişli tam ekran söz okuma modu, satır ortalı otomatik kaydırma, ekranı açık tutma desteği ve tam medya/sarma kontrolleri. |
+| **🔁 Öğrenme & Paylaşım Araçları** | Uzun basarak **4 satırlık kıta döngüsü (A–B repeat)**, **PNG görsel söz kartı paylaşımı**, panoya kopyalama, favori yıldızlama ve **Room** çevrimdışı kütüphane. |
+| **🎨 Temalar & Sekmeli Ayarlar** | **Koyu**, **Saf Siyah (OLED)**, **Açık** ve **Sistem** temaları; 4 sekmeli düzenli Ayarlar ekranı (`Görünüm`, `Overlay`, `Çeviri`, `Güncelleme`). |
 
 ---
 
 ## 🔒 Android 13+ Kurulum Notu
-APK olarak kurduktan sonra Bildirim Erişimi'nde *"Güvenliğiniz için bu ayar şu anda kullanılamıyor"* uyarısı görürseniz:
-1. Uygulama içindeki **1.A: Uygulama Bilgilerini Aç** butonuna basın.
-2. Sağ üst **⋮** menüsünden **"Kısıtlanmış ayarlara izin ver"** seçeneğini onaylayın.
-3. Geri dönüp **1.B: Bildirim Erişimini Aç** adımından izni verin.
+
+APK olarak kurulum sonrası **Bildirim Erişimi** açılırken *"Güvenliğiniz için bu ayar şu anda kullanılamıyor"* uyarısı görürseniz:
+
+1. Uygulama içindeki **1.A: Uygulama Bilgilerini Aç** butonuna dokunun.
+2. Sağ üst köşedeki **⋮** menüsünden **"Kısıtlanmış ayarlara izin ver"** seçeneğini onaylayın.
+3. Geri dönüp **1.B: Bildirim Erişimini Aç** adımından LyricSync iznini etkinleştirin.
+
+---
+
+## 🏗️ Mimari Özet
+
+```text
+app/src/main/java/com/lyricsync/app/
+├── domain/        # LrcParser (O(log N) ikili arama), veri modelleri, tema/motor enumları
+├── data/
+│   ├── local/     # Room önbellek veritabanı (LyricsDatabase) & AppPrefs
+│   ├── remote/    # LRCLIB istemcisi, CloudTranslator, UpdateChecker
+│   └── repository/# LyricsRepository (çevrimdışı öncelikli akış) & MediaStateBus (StateFlow)
+├── service/       # MediaNotificationListenerService & FloatingOverlayService
+└── ui/
+    ├── screens/   # MainScreen, SettingsDialog, PermissionOnboardingScreen
+    ├── theme/     # Material 3 temalar (Dark / AMOLED / Light)
+    └── util/      # LyricCardGenerator (1080x1350 PNG kart üretici)
+```
