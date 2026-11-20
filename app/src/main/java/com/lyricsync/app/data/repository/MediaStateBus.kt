@@ -53,6 +53,9 @@ object MediaStateBus {
     private val _autoHideOverlayOnPause = MutableStateFlow(true)
     val autoHideOverlayOnPause: StateFlow<Boolean> = _autoHideOverlayOnPause.asStateFlow()
 
+    private val _autoLaunchSpotify = MutableStateFlow(false)
+    val autoLaunchSpotify: StateFlow<Boolean> = _autoLaunchSpotify.asStateFlow()
+
     private val _loopRange = MutableStateFlow<LoopRange?>(null)
     val loopRange: StateFlow<LoopRange?> = _loopRange.asStateFlow()
 
@@ -73,6 +76,7 @@ object MediaStateBus {
     var onSeekToMs: ((Long) -> Unit)? = null
     var onSkipNext: (() -> Unit)? = null
     var onSkipPrevious: (() -> Unit)? = null
+    var onSyncFavoriteToPlayer: ((Boolean) -> Boolean)? = null
 
     fun init(context: Context) {
         if (prefs != null) return
@@ -88,6 +92,7 @@ object MediaStateBus {
             _wifiOnlyDownload.value = appPrefs.wifiOnlyDownload
             _keepScreenOn.value = appPrefs.keepScreenOn
             _autoHideOverlayOnPause.value = appPrefs.autoHideOverlayOnPause
+            _autoLaunchSpotify.value = appPrefs.autoLaunchSpotify
             _overlayConfig.value = appPrefs.getOverlayConfig()
             _lyricsState.value = _lyricsState.value.copy(targetLang = savedLang)
         }
@@ -164,6 +169,11 @@ object MediaStateBus {
     fun setAutoHideOverlayOnPause(enabled: Boolean) {
         _autoHideOverlayOnPause.value = enabled
         prefs?.autoHideOverlayOnPause = enabled
+    }
+
+    fun setAutoLaunchSpotify(enabled: Boolean) {
+        _autoLaunchSpotify.value = enabled
+        prefs?.autoLaunchSpotify = enabled
     }
 
     fun setLoopRange(range: LoopRange?) {

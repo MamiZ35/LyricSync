@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.media.MediaMetadata
+import android.media.Rating
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
@@ -96,6 +97,39 @@ class MediaNotificationListenerService : NotificationListenerService() {
         MediaStateBus.onSkipPrevious = {
             activeController?.transportControls?.skipToPrevious()
         }
+        MediaStateBus.onSyncFavoriteToPlayer = { isFavorite ->
+            val controller = activeController
+            if (controller == null) {
+                false
+            } else {
+                val actions = controller.playbackState?.customActions.orEmpty()
+                val preferredAction = actions.firstOrNull { ca ->
+                    val label = "${ca.action} ${ca.name}"
+                    if (isFavorite) {
+                        label.contains("ADD_TO_COLLECTION", ignoreCase = true)
+                    } else {
+                        label.contains("REMOVE_FROM_COLLECTION", ignoreCase = true)
+                    }
+                } ?: actions.firstOrNull { ca ->
+                    val label = "${ca.action} ${ca.name}"
+                    label.contains("ADD_TO_COLLECTION", ignoreCase = true) ||
+                        label.contains("REMOVE_FROM_COLLECTION", ignoreCase = true) ||
+                        label.contains("COLLECTION", ignoreCase = true) ||
+                        label.contains("HEART", ignoreCase = true) ||
+                        label.contains("LIKE", ignoreCase = true) ||
+                        label.contains("FAVORITE", ignoreCase = true)
+                }
+                preferredAction?.let { customAction ->
+                    runCatching {
+                        controller.transportControls.sendCustomAction(customAction, customAction.extras)
+                    }
+                }
+                runCatching {
+                    controller.transportControls.setRating(Rating.newHeartRating(isFavorite))
+                }
+                true
+            }
+        }
 
         // Automatically fetch & translate lyrics whenever track, target language, or engine changes
         serviceScope.launch {
@@ -149,6 +183,7 @@ class MediaNotificationListenerService : NotificationListenerService() {
         MediaStateBus.onSeekToMs = null
         MediaStateBus.onSkipNext = null
         MediaStateBus.onSkipPrevious = null
+        MediaStateBus.onSyncFavoriteToPlayer = null
         positionTickerJob?.cancel()
         cleanupController()
         runCatching {

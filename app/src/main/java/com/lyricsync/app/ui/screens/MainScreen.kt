@@ -157,6 +157,9 @@ fun MainScreen(
     onToggleKeepScreenOn: () -> Unit,
     onSetKeepScreenOn: (Boolean) -> Unit,
     onSetAutoHideOverlayOnPause: (Boolean) -> Unit,
+    autoLaunchSpotify: Boolean,
+    onSetAutoLaunchSpotify: (Boolean) -> Unit,
+    onLaunchSpotify: () -> Unit,
     onSetLoopRange: (LoopRange?) -> Unit,
     onSelectTargetLanguage: (String) -> Unit,
     onSelectDisplayMode: (LyricDisplayMode) -> Unit,
@@ -213,20 +216,32 @@ fun MainScreen(
     }
 
     // Automatically center the active lyric line on track load, lyric ready, or line change
-    LaunchedEffect(activeLineIndex, lyricsState.trackId, lyricsState.lines.size, isAutoScrollPaused) {
+    LaunchedEffect(activeLineIndex, lyricsState.trackId, lyricsState.lines.size, isAutoScrollPaused, isAmbientFullscreen) {
         if (!isAutoScrollPaused &&
             lyricsState.isSynced &&
             activeLineIndex in lyricsState.lines.indices
         ) {
-            val viewportHeight = listState.layoutInfo.viewportEndOffset -
-                listState.layoutInfo.viewportStartOffset
-            val centerOffset = if (viewportHeight > 0) -(viewportHeight / 3) else -220
+            val layoutInfo = listState.layoutInfo
+            val viewportHeight = layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset
             isProgrammaticScroll = true
             try {
-                listState.animateScrollToItem(
-                    index = activeLineIndex,
-                    scrollOffset = centerOffset
-                )
+                if (viewportHeight > 0) {
+                    val beforePadding = layoutInfo.beforeContentPadding
+                    val activeItemSize = layoutInfo.visibleItemsInfo
+                        .firstOrNull { it.index == activeLineIndex }?.size ?: 140
+                    val targetY = if (isAmbientFullscreen) {
+                        (viewportHeight * 0.40f).toInt()
+                    } else {
+                        (viewportHeight * 0.26f).toInt()
+                    }
+                    val centerOffset = beforePadding + (activeItemSize / 2) - targetY
+                    listState.animateScrollToItem(
+                        index = activeLineIndex,
+                        scrollOffset = centerOffset
+                    )
+                } else {
+                    listState.animateScrollToItem(index = activeLineIndex)
+                }
             } finally {
                 isProgrammaticScroll = false
             }
@@ -319,6 +334,19 @@ fun MainScreen(
                         }
                     }
                 }
+
+                if (trackState.hasActiveTrack && !trackState.isManualOverride) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    TrackSeekSlider(
+                        positionMs = trackState.positionMs,
+                        durationMs = trackState.durationMs,
+                        isPlaying = trackState.isPlaying,
+                        onSeekToMs = onSeekToMs,
+                        onPlayPauseToggle = onPlayPauseToggle,
+                        onSkipPrevious = onSkipPrevious,
+                        onSkipNext = onSkipNext
+                    )
+                }
             } else {
                 // Top Control Bar + Quick Action Chips
                 TopHeaderBar(
@@ -372,9 +400,11 @@ fun MainScreen(
                 NowPlayingCard(
                     trackState = trackState,
                     lyricsState = lyricsState,
+                    onSeekToMs = onSeekToMs,
                     onPlayPauseToggle = onPlayPauseToggle,
                     onSkipPrevious = onSkipPrevious,
                     onSkipNext = onSkipNext,
+                    onLaunchSpotify = onLaunchSpotify,
                     onOpenSearch = { showSearchDialog = true }
                 )
             }
@@ -508,7 +538,7 @@ fun MainScreen(
                         LazyColumn(
                             state = listState,
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(vertical = 120.dp),
+                            contentPadding = PaddingValues(top = 48.dp, bottom = 260.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             if (!lyricsState.isSynced) {
@@ -719,12 +749,14 @@ fun MainScreen(
         SettingsAndModelsDialog(
             themeMode = themeMode,
             keepScreenOn = keepScreenOn,
+            autoLaunchSpotify = autoLaunchSpotify,
             overlayConfig = overlayConfig,
             translationEngine = translationEngine,
             wifiOnlyDownload = wifiOnlyDownload,
             autoHideOverlayOnPause = autoHideOverlayOnPause,
             onSelectThemeMode = onSelectThemeMode,
             onSetKeepScreenOn = onSetKeepScreenOn,
+            onSetAutoLaunchSpotify = onSetAutoLaunchSpotify,
             onUpdateOverlayConfig = onUpdateOverlayConfig,
             onSelectTranslationEngine = onSelectTranslationEngine,
             onSetWifiOnlyDownload = onSetWifiOnlyDownload,
@@ -1008,21 +1040,120 @@ private fun TopHeaderBar(
 }
 
 @Composable
-private fun NowPlayingCard(
-    trackState: MediaTrackState,
-    lyricsState: LyricsState,
+private fun TrackSeekSlider(
+    positionMs: Long,
+    durationMs: Long,
+    isPlaying: Boolean,
+    onSeekToMs: (Long) -> Unit,
     onPlayPauseToggle: () -> Unit,
     onSkipPrevious: () -> Unit,
-    onSkipNext: () -> Unit,
-    onOpenSearch: () -> Unit
+    onSkipNext: () -> Unit
 ) {
-    val shape = RoundedCornerShape(22.dp)
-    val progress = if (trackState.durationMs > 0L) {
-        (trackState.positionMs.toFloat() / trackState.durationMs.toFloat()).coerceIn(0f, 1f)
+    var isDragging by remember(durationMs) { mutableStateOf(false) }
+    var dragProgress by remember(durationMs) { mutableStateOf(0f) }
+    val progress = if (durationMs > 0L) {
+        (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
     } else {
         0f
     }
+    val displayedProgress = if (isDragging) dragProgress else progress
+    val displayedPosMs = if (durationMs > 0L) {
+        (displayedProgress * durationMs.toFloat()).toLong()
+    } else {
+        positionMs
+    }
 
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Slider(
+            value = displayedProgress,
+            onValueChange = { value ->
+                if (durationMs > 0L) {
+                    isDragging = true
+                    dragProgress = value.coerceIn(0f, 1f)
+                }
+            },
+            onValueChangeFinished = {
+                if (durationMs > 0L) {
+                    val targetMs = (dragProgress * durationMs.toFloat()).toLong()
+                    onSeekToMs(targetMs)
+                }
+                isDragging = false
+            },
+            enabled = durationMs > 0L,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(28.dp)
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = formatDuration(displayedPosMs),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                IconButton(onClick = onSkipPrevious, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.SkipPrevious,
+                        contentDescription = "Önceki",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+                        .clickable { onPlayPauseToggle() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Duraklat" else "Oynat",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                IconButton(onClick = onSkipNext, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.SkipNext,
+                        contentDescription = "Sonraki",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            Text(
+                text = formatDuration(durationMs),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun NowPlayingCard(
+    trackState: MediaTrackState,
+    lyricsState: LyricsState,
+    onSeekToMs: (Long) -> Unit,
+    onPlayPauseToggle: () -> Unit,
+    onSkipPrevious: () -> Unit,
+    onSkipNext: () -> Unit,
+    onLaunchSpotify: () -> Unit,
+    onOpenSearch: () -> Unit
+) {
+    val shape = RoundedCornerShape(22.dp)
     val accentColor = trackState.accentColorArgb?.let { Color(it) } ?: MaterialTheme.colorScheme.primary
 
     Column(
@@ -1130,82 +1261,52 @@ private fun NowPlayingCard(
         }
 
         if (trackState.hasActiveTrack && !trackState.isManualOverride) {
-            Spacer(modifier = Modifier.height(10.dp))
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(5.dp)
-                    .clip(RoundedCornerShape(3.dp)),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+            Spacer(modifier = Modifier.height(6.dp))
+            TrackSeekSlider(
+                positionMs = trackState.positionMs,
+                durationMs = trackState.durationMs,
+                isPlaying = trackState.isPlaying,
+                onSeekToMs = onSeekToMs,
+                onPlayPauseToggle = onPlayPauseToggle,
+                onSkipPrevious = onSkipPrevious,
+                onSkipNext = onSkipNext
             )
-            Spacer(modifier = Modifier.height(4.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = formatDuration(trackState.positionMs),
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                // Media Transport Controls (Previous / Play-Pause / Next)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    IconButton(onClick = onSkipPrevious, modifier = Modifier.size(32.dp)) {
-                        Icon(
-                            imageVector = Icons.Default.SkipPrevious,
-                            contentDescription = "Önceki",
-                            tint = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
-                            .clickable { onPlayPauseToggle() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (trackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (trackState.isPlaying) "Duraklat" else "Oynat",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    IconButton(onClick = onSkipNext, modifier = Modifier.size(32.dp)) {
-                        Icon(
-                            imageVector = Icons.Default.SkipNext,
-                            contentDescription = "Sonraki",
-                            tint = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-
-                Text(
-                    text = formatDuration(trackState.durationMs),
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
         } else if (!trackState.hasActiveTrack) {
             Spacer(modifier = Modifier.height(10.dp))
-            OutlinedButton(
-                onClick = onOpenSearch,
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(text = "Manuel Şarkı Sözü Ara", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Button(
+                    onClick = onLaunchSpotify,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Spotify'ı Başlat",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                OutlinedButton(
+                    onClick = onOpenSearch,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Manuel Söz Ara",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }
@@ -1816,12 +1917,14 @@ private fun SettingsSwitchRow(
 private fun SettingsAndModelsDialog(
     themeMode: ThemeMode,
     keepScreenOn: Boolean,
+    autoLaunchSpotify: Boolean,
     overlayConfig: OverlayConfig,
     translationEngine: TranslationEngine,
     wifiOnlyDownload: Boolean,
     autoHideOverlayOnPause: Boolean,
     onSelectThemeMode: (ThemeMode) -> Unit,
     onSetKeepScreenOn: (Boolean) -> Unit,
+    onSetAutoLaunchSpotify: (Boolean) -> Unit,
     onUpdateOverlayConfig: (OverlayConfig) -> Unit,
     onSelectTranslationEngine: (TranslationEngine) -> Unit,
     onSetWifiOnlyDownload: (Boolean) -> Unit,
@@ -1935,6 +2038,13 @@ private fun SettingsAndModelsDialog(
                         subtitle = "Şarkı sözü okurken ekranın otomatik kapanmasını engeller.",
                         checked = keepScreenOn,
                         onCheckedChange = onSetKeepScreenOn
+                    )
+
+                    SettingsSwitchRow(
+                        title = "Açılışta Spotify'ı Otomatik Başlat",
+                        subtitle = "Uygulama açılınca aktif şarkı yoksa Spotify'ı arka planda uyandırıp geri döner.",
+                        checked = autoLaunchSpotify,
+                        onCheckedChange = onSetAutoLaunchSpotify
                     )
                 }
 

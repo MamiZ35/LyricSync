@@ -10,8 +10,11 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
+import android.view.KeyEvent
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -132,9 +135,20 @@ class MainActivity : ComponentActivity() {
             val wifiOnlyDownload by MediaStateBus.wifiOnlyDownload.collectAsState()
             val keepScreenOn by MediaStateBus.keepScreenOn.collectAsState()
             val autoHideOverlayOnPause by MediaStateBus.autoHideOverlayOnPause.collectAsState()
+            val autoLaunchSpotify by MediaStateBus.autoLaunchSpotify.collectAsState()
             val loopRange by MediaStateBus.loopRange.collectAsState()
             val coroutineScope = rememberCoroutineScope()
             var activeTranslationJob by remember { mutableStateOf<Job?>(null) }
+            var autoLaunchAttempted by rememberSaveable { mutableStateOf(false) }
+
+            LaunchedEffect(onboardingCompleted) {
+                if (onboardingCompleted && !autoLaunchAttempted) {
+                    autoLaunchAttempted = true
+                    if (MediaStateBus.autoLaunchSpotify.value && !MediaStateBus.trackState.value.hasActiveTrack) {
+                        wakeOrLaunchSpotify(returnToLyricSync = true)
+                    }
+                }
+            }
 
             LaunchedEffect(keepScreenOn) {
                 if (keepScreenOn) {
@@ -176,6 +190,7 @@ class MainActivity : ComponentActivity() {
                         wifiOnlyDownload = wifiOnlyDownload,
                         keepScreenOn = keepScreenOn,
                         autoHideOverlayOnPause = autoHideOverlayOnPause,
+                        autoLaunchSpotify = autoLaunchSpotify,
                         loopRange = loopRange,
                         onOpenPermissions = {
                             onboardingCompleted = false
@@ -191,6 +206,12 @@ class MainActivity : ComponentActivity() {
                         },
                         onSetAutoHideOverlayOnPause = { enabled ->
                             MediaStateBus.setAutoHideOverlayOnPause(enabled)
+                        },
+                        onSetAutoLaunchSpotify = { enabled ->
+                            MediaStateBus.setAutoLaunchSpotify(enabled)
+                        },
+                        onLaunchSpotify = {
+                            wakeOrLaunchSpotify(returnToLyricSync = false)
                         },
                         onSetLoopRange = { range ->
                             MediaStateBus.setLoopRange(range)
@@ -284,6 +305,14 @@ class MainActivity : ComponentActivity() {
                         },
                         onToggleFavorite = { cacheKey, isFav ->
                             repository.toggleFavorite(cacheKey, isFav)
+                            val syncedToPlayer = MediaStateBus.onSyncFavoriteToPlayer?.invoke(isFav) == true
+                            if (isFav && !syncedToPlayer) {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "LyricSync favorilerine eklendi",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
                         },
                         onSelectCachedSong = { cacheKey ->
                             activeTranslationJob?.cancel()
@@ -409,6 +438,50 @@ class MainActivity : ComponentActivity() {
             .contains(context.packageName)
     }
 
+    private fun wakeOrLaunchSpotify(returnToLyricSync: Boolean) {
+        val currentTrack = MediaStateBus.trackState.value
+        if (currentTrack.hasActiveTrack && !currentTrack.isPlaying && MediaStateBus.onPlayPauseToggle != null) {
+            MediaStateBus.onPlayPauseToggle?.invoke()
+            return
+        }
+
+        val spotifyIntent = packageManager.getLaunchIntentForPackage(SPOTIFY_PACKAGE)
+        if (spotifyIntent == null) {
+            Toast.makeText(this, "Spotify uygulaması cihazda bulunamadı.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        spotifyIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { startActivity(spotifyIntent) }
+
+        if (returnToLyricSync) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                runCatching {
+                    val playDown = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
+                        setPackage(SPOTIFY_PACKAGE)
+                        putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY))
+                    }
+                    val playUp = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
+                        setPackage(SPOTIFY_PACKAGE)
+                        putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY))
+                    }
+                    sendBroadcast(playDown)
+                    sendBroadcast(playUp)
+                }
+                if (MediaStateBus.trackState.value.let { it.hasActiveTrack && !it.isPlaying }) {
+                    MediaStateBus.onPlayPauseToggle?.invoke()
+                }
+                runCatching {
+                    startActivity(
+                        Intent(this, MainActivity::class.java).addFlags(
+                            Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        )
+                    )
+                }
+            }, 650L)
+        }
+    }
+
     private fun openAppDetailsSettings() {
         runCatching {
             val intent = Intent(
@@ -433,5 +506,9 @@ class MainActivity : ComponentActivity() {
             )
             startActivity(intent)
         }
+    }
+
+    private companion object {
+        const val SPOTIFY_PACKAGE = "com.spotify.music"
     }
 }
