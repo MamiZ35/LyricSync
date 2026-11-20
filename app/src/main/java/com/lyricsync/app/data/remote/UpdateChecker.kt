@@ -9,6 +9,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.net.URI
 import java.util.concurrent.TimeUnit
 
 data class ReleaseInfo(
@@ -63,7 +64,10 @@ object UpdateChecker {
                             val asset = element.asJsonObject
                             val name = asset.get("name")?.asString.orEmpty()
                             val browserUrl = asset.get("browser_download_url")?.asString
-                            if (name.endsWith(".apk", ignoreCase = true) && !browserUrl.isNullOrBlank()) {
+                            if (name.endsWith(".apk", ignoreCase = true) &&
+                                !browserUrl.isNullOrBlank() &&
+                                isTrustedGithubUrl(browserUrl)
+                            ) {
                                 downloadUrl = browserUrl
                                 break
                             }
@@ -88,6 +92,12 @@ object UpdateChecker {
         downloadUrl: String,
         onProgress: (Int) -> Unit
     ): File? = withContext(Dispatchers.IO) {
+        if (!isTrustedGithubUrl(downloadUrl)) return@withContext null
+        val updateDir = File(context.cacheDir, "updates").apply { mkdirs() }
+        val tmpFile = File(updateDir, "LyricSync-update.apk.tmp")
+        val outFile = File(updateDir, "LyricSync-update.apk")
+        tmpFile.delete()
+
         try {
             val request = Request.Builder()
                 .url(downloadUrl)
@@ -96,15 +106,14 @@ object UpdateChecker {
 
             downloadClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@withContext null
+                if (!isTrustedGithubUrl(response.request.url.toString())) return@withContext null
                 val body = response.body ?: return@withContext null
                 val totalBytes = body.contentLength()
-                val updateDir = File(context.cacheDir, "updates").apply { mkdirs() }
-                val outFile = File(updateDir, "LyricSync-update.apk")
+                var bytesReadTotal = 0L
 
                 body.byteStream().use { input ->
-                    FileOutputStream(outFile).use { output ->
+                    FileOutputStream(tmpFile).use { output ->
                         val buffer = ByteArray(16 * 1024)
-                        var bytesReadTotal = 0L
                         var lastReportedPct = -1
 
                         while (true) {
@@ -123,14 +132,47 @@ object UpdateChecker {
                         output.flush()
                     }
                 }
+
+                if (bytesReadTotal <= 0L || (totalBytes > 0L && bytesReadTotal != totalBytes)) {
+                    tmpFile.delete()
+                    return@withContext null
+                }
+
+                // Verify APK (ZIP) magic header "PK" before replacing final APK file
+                val hasZipMagic = tmpFile.inputStream().use { stream ->
+                    val header = ByteArray(2)
+                    stream.read(header) == 2 && header[0] == 0x50.toByte() && header[1] == 0x4B.toByte()
+                }
+                if (!hasZipMagic) {
+                    tmpFile.delete()
+                    return@withContext null
+                }
+
+                if (outFile.exists()) outFile.delete()
+                if (!tmpFile.renameTo(outFile)) {
+                    tmpFile.copyTo(outFile, overwrite = true)
+                    tmpFile.delete()
+                }
                 withContext(Dispatchers.Main) { onProgress(100) }
                 outFile
             }
         } catch (ce: CancellationException) {
+            tmpFile.delete()
             throw ce
         } catch (_: Exception) {
+            tmpFile.delete()
             null
         }
+    }
+
+    internal fun isTrustedGithubUrl(url: String): Boolean {
+        val uri = runCatching { URI(url.trim()) }.getOrNull() ?: return false
+        if (!uri.scheme.equals("https", ignoreCase = true)) return false
+        val host = uri.host?.lowercase() ?: return false
+        return host == "github.com" ||
+            host.endsWith(".github.com") ||
+            host == "githubusercontent.com" ||
+            host.endsWith(".githubusercontent.com")
     }
 
     internal fun isNewerVersion(latestTag: String, currentVersion: String): Boolean {

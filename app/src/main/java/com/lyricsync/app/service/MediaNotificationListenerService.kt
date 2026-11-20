@@ -289,8 +289,10 @@ class MediaNotificationListenerService : NotificationListenerService() {
             while (isActive) {
                 val controller = activeController
                 val state = controller?.playbackState
+                var isCurrentlyPlaying = false
                 if (controller != null && state != null) {
                     val isPlaying = state.state == PlaybackState.STATE_PLAYING
+                    isCurrentlyPlaying = isPlaying
                     val duration = MediaStateBus.trackState.value.durationMs
                     var pos = computeCurrentPosition(state, duration)
 
@@ -312,11 +314,11 @@ class MediaNotificationListenerService : NotificationListenerService() {
                 } else {
                     idleTicks++
                 }
-                if (idleTicks >= 20) {
+                if (idleTicks >= 5) {
                     idleTicks = 0
                     refreshSessions()
                 }
-                delay(100L)
+                delay(if (isCurrentlyPlaying) 100L else 400L)
             }
         }
     }

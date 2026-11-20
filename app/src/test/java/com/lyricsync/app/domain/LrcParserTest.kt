@@ -73,4 +73,31 @@ class LrcParserTest {
         assertFalse(UpdateChecker.isNewerVersion("v1.2.5", "1.2.5"))
         assertFalse(UpdateChecker.isNewerVersion("v1.2.4", "1.2.5"))
     }
+
+    @Test
+    fun `findActiveLineIndex handles empty lists, negative positions, and duplicate timestamps`() {
+        assertEquals(-1, LrcParser.findActiveLineIndex(emptyList(), 1000L, isSynced = true))
+        val dupLines = listOf(
+            LyricLine(2000L, "First"),
+            LyricLine(5000L, "Repeat A"),
+            LyricLine(5000L, "Repeat B"),
+            LyricLine(8000L, "End")
+        )
+        assertEquals(-1, LrcParser.findActiveLineIndex(dupLines, -500L, isSynced = true))
+        assertEquals(-1, LrcParser.findActiveLineIndex(dupLines, 1999L, isSynced = true))
+        assertEquals(2, LrcParser.findActiveLineIndex(dupLines, 5000L, isSynced = true))
+        assertEquals(2, LrcParser.findActiveLineIndex(dupLines, 7999L, isSynced = true))
+        assertEquals(3, LrcParser.findActiveLineIndex(dupLines, 8000L, isSynced = true))
+    }
+
+    @Test
+    fun `isTrustedGithubUrl accepts only GitHub HTTPS hosts`() {
+        assertTrue(UpdateChecker.isTrustedGithubUrl(UpdateChecker.LATEST_APK_URL))
+        assertTrue(UpdateChecker.isTrustedGithubUrl("https://objects.githubusercontent.com/github-production-release-asset/app.apk"))
+        assertTrue(UpdateChecker.isTrustedGithubUrl("https://release-assets.githubusercontent.com/test.apk"))
+        assertFalse(UpdateChecker.isTrustedGithubUrl("http://github.com/MamiZ35/LyricSync/releases/latest/download/LyricSync.apk"))
+        assertFalse(UpdateChecker.isTrustedGithubUrl("https://evilgithub.com/LyricSync.apk"))
+        assertFalse(UpdateChecker.isTrustedGithubUrl("https://example.com/LyricSync.apk"))
+        assertFalse(UpdateChecker.isTrustedGithubUrl(""))
+    }
 }

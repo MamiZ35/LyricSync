@@ -305,7 +305,15 @@ class MainActivity : ComponentActivity() {
                         },
                         onToggleFavorite = { cacheKey, isFav ->
                             repository.toggleFavorite(cacheKey, isFav)
-                            val syncedToPlayer = MediaStateBus.onSyncFavoriteToPlayer?.invoke(isFav) == true
+                            val currentLive = MediaStateBus.trackState.value
+                            val isCurrentPlayingTrack = !currentLive.isManualOverride &&
+                                currentLive.trackId.isNotBlank() &&
+                                cacheKey.contains("|${currentLive.trackId}|", ignoreCase = true)
+                            val syncedToPlayer = if (isCurrentPlayingTrack) {
+                                MediaStateBus.onSyncFavoriteToPlayer?.invoke(isFav) == true
+                            } else {
+                                false
+                            }
                             if (isFav && !syncedToPlayer) {
                                 Toast.makeText(
                                     this@MainActivity,
@@ -456,6 +464,7 @@ class MainActivity : ComponentActivity() {
 
         if (returnToLyricSync) {
             Handler(Looper.getMainLooper()).postDelayed({
+                if (isFinishing || isDestroyed) return@postDelayed
                 runCatching {
                     val playDown = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
                         setPackage(SPOTIFY_PACKAGE)

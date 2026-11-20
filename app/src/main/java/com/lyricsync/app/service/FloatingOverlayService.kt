@@ -185,6 +185,8 @@ class FloatingOverlayService : Service(),
                         runCatching {
                             windowManager?.updateViewLayout(this, windowParams)
                         }
+                    },
+                    onDragEnd = {
                         MediaStateBus.updateOverlayPosition(windowParams.x, windowParams.y)
                     },
                     onToggleLock = {
@@ -303,6 +305,7 @@ class FloatingOverlayService : Service(),
 @Composable
 private fun FloatingSubtitleOverlayContent(
     onDrag: (Float, Float) -> Unit,
+    onDragEnd: () -> Unit,
     onToggleLock: () -> Unit,
     onTouchLockChanged: (Boolean) -> Unit,
     onClose: () -> Unit
@@ -384,7 +387,10 @@ private fun FloatingSubtitleOverlayContent(
             .then(
                 if (!overlayConfig.isTouchLocked) {
                     Modifier.pointerInput(Unit) {
-                        detectDragGestures { change, dragAmount ->
+                        detectDragGestures(
+                            onDragEnd = { onDragEnd() },
+                            onDragCancel = { onDragEnd() }
+                        ) { change, dragAmount ->
                             change.consume()
                             onDrag(dragAmount.x, dragAmount.y)
                         }

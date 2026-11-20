@@ -71,6 +71,9 @@ object LyricCardGenerator {
                 canvas.clipPath(clipPath)
                 val scaledArt = Bitmap.createScaledBitmap(track.albumArt, 140, 140, true)
                 canvas.drawBitmap(scaledArt, 120f, 156f, Paint(Paint.FILTER_BITMAP_FLAG))
+                if (scaledArt !== track.albumArt) {
+                    scaledArt.recycle()
+                }
                 canvas.restore()
             } else {
                 val placeholderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {

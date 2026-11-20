@@ -52,10 +52,22 @@ object LrcParser {
     }
 
     /**
-     * Returns the index of the currently active synced lyric line for [positionMs].
+     * Returns the index of the currently active synced lyric line for [positionMs] in O(log N) time.
      */
     fun findActiveLineIndex(lines: List<LyricLine>, positionMs: Long, isSynced: Boolean): Int {
-        if (!isSynced || lines.isEmpty()) return -1
-        return lines.indexOfLast { it.timeMs <= positionMs }
+        if (!isSynced || lines.isEmpty() || positionMs < lines[0].timeMs) return -1
+        var low = 0
+        var high = lines.lastIndex
+        var result = -1
+        while (low <= high) {
+            val mid = (low + high) ushr 1
+            if (lines[mid].timeMs <= positionMs) {
+                result = mid
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        return result
     }
 }
