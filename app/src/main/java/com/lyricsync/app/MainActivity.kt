@@ -1,11 +1,13 @@
 package com.lyricsync.app
 
 import android.Manifest
+import android.app.PendingIntent
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -36,6 +38,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import com.lyricsync.app.data.remote.UpdateChecker
 import com.lyricsync.app.data.repository.LyricsRepository
 import com.lyricsync.app.data.repository.MediaStateBus
@@ -43,18 +46,23 @@ import com.lyricsync.app.domain.LyricLine
 import com.lyricsync.app.domain.ThemeMode
 import com.lyricsync.app.service.FloatingOverlayService
 import com.lyricsync.app.service.MediaNotificationListenerService
+import com.lyricsync.app.service.PackageInstallReceiver
 import com.lyricsync.app.ui.screens.MainScreen
 import com.lyricsync.app.ui.screens.PermissionOnboardingScreen
 import com.lyricsync.app.ui.theme.LyricSyncTheme
 import com.lyricsync.app.ui.util.LyricCardGenerator
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var repository: LyricsRepository
     private var pendingInstallApkFile: File? = null
+    @Volatile
+    private var isCreatingInstallSession = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,6 +78,12 @@ class MainActivity : ComponentActivity() {
             }
             var onboardingCompleted by rememberSaveable {
                 mutableStateOf(hasNotificationAccess)
+            }
+            var hasAttemptedNotificationAccess by rememberSaveable {
+                mutableStateOf(false)
+            }
+            var isSessionInstalling by remember {
+                mutableStateOf(false)
             }
 
             // Request POST_NOTIFICATIONS runtime permission on Android 13+ for foreground overlay notification
@@ -117,7 +131,9 @@ class MainActivity : ComponentActivity() {
                             ) {
                                 pendingInstallApkFile?.let { file ->
                                     pendingInstallApkFile = null
-                                    installDownloadedApk(file)
+                                    installDownloadedApk(file) { installing ->
+                                        isSessionInstalling = installing
+                                    }
                                 }
                             }
                         }
@@ -173,11 +189,19 @@ class MainActivity : ComponentActivity() {
                     PermissionOnboardingScreen(
                         hasNotificationAccess = hasNotificationAccess,
                         hasOverlayPermission = hasOverlayPermission,
+                        hasAttemptedNotificationAccess = hasAttemptedNotificationAccess,
+                        isSessionInstalling = isSessionInstalling,
                         onOpenAppDetails = {
                             openAppDetailsSettings()
                         },
                         onRequestNotificationAccess = {
+                            hasAttemptedNotificationAccess = true
                             openNotificationListenerSettings()
+                        },
+                        onReinstallViaSession = {
+                            reinstallSelfViaSession { installing ->
+                                isSessionInstalling = installing
+                            }
                         },
                         onRequestOverlayPermission = {
                             openOverlaySettings()
@@ -424,14 +448,33 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun installDownloadedApk(apkFile: File) {
+    private fun reinstallSelfViaSession(onInstallingStateChanged: (Boolean) -> Unit) {
+        val baseApk = applicationInfo.sourceDir?.let { File(it) }
+        if (baseApk == null || !baseApk.exists() || !baseApk.canRead()) {
+            Toast.makeText(
+                this,
+                "Uygulama paketi okunamadı. Play Store'dan SAI ile kurmayı deneyin.",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        installDownloadedApk(baseApk, onInstallingStateChanged)
+    }
+
+    private fun installDownloadedApk(
+        apkFile: File,
+        onInstallingStateChanged: ((Boolean) -> Unit)? = null
+    ) {
+        if (isCreatingInstallSession) return
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !packageManager.canRequestPackageInstalls()
         ) {
+            onInstallingStateChanged?.invoke(false)
             pendingInstallApkFile = apkFile
             Toast.makeText(
                 this,
-                "Güncellemeyi kurmak için 'Bu kaynaktan izin ver' seçeneğini açın",
+                "Kurulumu başlatmak için 'Bu kaynaktan izin ver' seçeneğini açın",
                 Toast.LENGTH_LONG
             ).show()
             runCatching {
@@ -442,6 +485,93 @@ class MainActivity : ComponentActivity() {
                     )
                 )
             }
+            return
+        }
+
+        isCreatingInstallSession = true
+        onInstallingStateChanged?.invoke(true)
+        lifecycleScope.launch(Dispatchers.IO) {
+            var session: PackageInstaller.Session? = null
+            val installResult = runCatching {
+                val packageInstaller = packageManager.packageInstaller
+                runCatching {
+                    packageInstaller.mySessions.forEach { info ->
+                        runCatching { packageInstaller.abandonSession(info.sessionId) }
+                    }
+                }
+                val sizeBytes = apkFile.length()
+                val params = PackageInstaller.SessionParams(
+                    PackageInstaller.SessionParams.MODE_FULL_INSTALL
+                ).apply {
+                    setAppPackageName(packageName)
+                    if (sizeBytes > 0L) {
+                        setSize(sizeBytes)
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        setPackageSource(PackageInstaller.PACKAGE_SOURCE_STORE)
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+                    }
+                }
+                val sessionId = packageInstaller.createSession(params)
+                val activeSession = packageInstaller.openSession(sessionId).also { session = it }
+                val writeLength = sizeBytes.takeIf { it > 0L } ?: -1L
+                apkFile.inputStream().use { input ->
+                    activeSession.openWrite("base.apk", 0L, writeLength).use { output ->
+                        input.copyTo(output)
+                        activeSession.fsync(output)
+                    }
+                }
+                val callbackIntent = Intent(
+                    this@MainActivity,
+                    PackageInstallReceiver::class.java
+                ).apply {
+                    action = PackageInstallReceiver.ACTION_INSTALL_COMMIT
+                }
+                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+                } else {
+                    PendingIntent.FLAG_UPDATE_CURRENT
+                }
+                val pendingIntent = PendingIntent.getBroadcast(
+                    this@MainActivity,
+                    sessionId,
+                    callbackIntent,
+                    flags
+                )
+                activeSession.commit(pendingIntent.intentSender)
+                activeSession.close()
+                session = null
+            }
+
+            withContext(Dispatchers.Main) {
+                isCreatingInstallSession = false
+                onInstallingStateChanged?.invoke(false)
+                installResult.onFailure { error ->
+                    runCatching { session?.abandon() }
+                    runCatching { session?.close() }
+                    fallbackInstallViaFileProvider(apkFile, error)
+                }
+            }
+        }
+    }
+
+    private fun fallbackInstallViaFileProvider(apkFile: File, error: Throwable) {
+        val isInCache = runCatching {
+            val canonicalApk = apkFile.canonicalPath
+            val cachePath = cacheDir.canonicalPath
+            val extCachePath = externalCacheDir?.canonicalPath
+            canonicalApk.startsWith(cachePath) ||
+                (extCachePath != null && canonicalApk.startsWith(extCachePath))
+        }.getOrDefault(false)
+
+        if (!isInCache) {
+            Toast.makeText(
+                this,
+                "Oturum kurulumu başlatılamadı: ${error.localizedMessage ?: "Bilinmeyen hata"}",
+                Toast.LENGTH_LONG
+            ).show()
             return
         }
 
@@ -456,8 +586,12 @@ class MainActivity : ComponentActivity() {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             startActivity(installIntent)
-        }.onFailure {
-            Toast.makeText(this, "Kurulum başlatılamadı: ${it.localizedMessage}", Toast.LENGTH_LONG).show()
+        }.onFailure { fallbackError ->
+            Toast.makeText(
+                this,
+                "Kurulum başlatılamadı: ${fallbackError.localizedMessage}",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
@@ -517,15 +651,37 @@ class MainActivity : ComponentActivity() {
             val intent = Intent(
                 Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                 Uri.parse("package:$packageName")
-            )
+            ).apply {
+                putExtra(":settings:fragment_args_key", "allow_restricted_settings")
+            }
             startActivity(intent)
         }
     }
 
     private fun openNotificationListenerSettings() {
-        runCatching {
-            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        val componentName = ComponentName(packageName, MediaNotificationListenerService::class.java.name)
+        val componentString = componentName.flattenToString()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val detailIntent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).apply {
+                putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, componentString)
+            }
+            if (runCatching { startActivity(detailIntent) }.isSuccess) {
+                return
+            }
         }
+
+        val fallbackIntent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
+            putExtra(":settings:fragment_args_key", componentString)
+            putExtra(
+                ":settings:show_fragment_args",
+                Bundle().apply { putString(":settings:fragment_args_key", componentString) }
+            )
+        }
+        runCatching { startActivity(fallbackIntent) }
+            .onFailure {
+                runCatching { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+            }
     }
 
     private fun openOverlaySettings() {

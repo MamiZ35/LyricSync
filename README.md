@@ -41,9 +41,10 @@
 
 APK olarak kurulum sonrası **Bildirim Erişimi** açılırken *"Güvenliğiniz için bu ayar şu anda kullanılamıyor"* uyarısı görürseniz:
 
-1. Uygulama içindeki **1.A: Uygulama Bilgilerini Aç** butonuna dokunun.
-2. Sağ üst köşedeki **⋮** menüsünden **"Kısıtlanmış ayarlara izin ver"** seçeneğini onaylayın.
-3. Geri dönüp **1.B: Bildirim Erişimini Aç** adımından LyricSync iznini etkinleştirin.
+1. Önce uygulama içindeki **1. Adım: Bildirim Erişimini Aç** düğmesine dokunun ve kilitli **LyricSync** anahtarına basarak kısıtlama uyarısını tetikleyin *(bu adım yapılmadan sistem gizli kilit menüsünü göstermez)*.
+2. Ardından **2.A: Uygulama Bilgilerini Aç** düğmesine dokunup sağ üst köşedeki **⋮** menüsünden (Xiaomi cihazlarda sayfanın en altında) **"Kısıtlanmış ayarlara izin ver"** seçeneğini onaylayın.
+3. Tecno / Infinix (HiOS) gibi cihazlarda **⋮** menüsü hiç gözükmüyorsa **2.B: Oturum Yükleyicisi ile Kısıtlamayı Kaldır** düğmesiyle mağaza oturumu modunda yeniden kurun veya Play Store'dan **SAI (Split APKs Installer)** ile kurulum yapın.
+4. Son olarak **1. Adım: Bildirim Erişimini Aç** üzerinden LyricSync iznini etkinleştirin.
 
 ---
 

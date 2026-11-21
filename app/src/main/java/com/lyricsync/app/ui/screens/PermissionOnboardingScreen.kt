@@ -1,5 +1,6 @@
 package com.lyricsync.app.ui.screens
 
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -20,18 +21,21 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,13 +45,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.util.Locale
 
 @Composable
 fun PermissionOnboardingScreen(
     hasNotificationAccess: Boolean,
     hasOverlayPermission: Boolean,
+    hasAttemptedNotificationAccess: Boolean,
+    isSessionInstalling: Boolean,
     onOpenAppDetails: () -> Unit,
     onRequestNotificationAccess: () -> Unit,
+    onReinstallViaSession: () -> Unit,
     onRequestOverlayPermission: () -> Unit,
     onContinueToApp: () -> Unit
 ) {
@@ -101,8 +109,11 @@ fun PermissionOnboardingScreen(
             // Step 1: Notification Access + Android 13+ Restricted Settings Unlock Guide
             NotificationPermissionCard(
                 isGranted = hasNotificationAccess,
+                hasAttemptedNotificationAccess = hasAttemptedNotificationAccess,
+                isSessionInstalling = isSessionInstalling,
                 onOpenAppDetails = onOpenAppDetails,
-                onRequestNotificationAccess = onRequestNotificationAccess
+                onRequestNotificationAccess = onRequestNotificationAccess,
+                onReinstallViaSession = onReinstallViaSession
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -145,14 +156,31 @@ fun PermissionOnboardingScreen(
 @Composable
 private fun NotificationPermissionCard(
     isGranted: Boolean,
+    hasAttemptedNotificationAccess: Boolean,
+    isSessionInstalling: Boolean,
     onOpenAppDetails: () -> Unit,
-    onRequestNotificationAccess: () -> Unit
+    onRequestNotificationAccess: () -> Unit,
+    onReinstallViaSession: () -> Unit
 ) {
     val borderColor = if (isGranted) {
         Color(0xFF10B981)
     } else {
         MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
     }
+    val oemSignature = remember {
+        "${Build.MANUFACTURER} ${Build.BRAND}".lowercase(Locale.ROOT)
+    }
+    val isTranssionHiOS = remember(oemSignature) {
+        oemSignature.contains("tecno") ||
+            oemSignature.contains("infinix") ||
+            oemSignature.contains("itel")
+    }
+    val isXiaomi = remember(oemSignature) {
+        oemSignature.contains("xiaomi") ||
+            oemSignature.contains("redmi") ||
+            oemSignature.contains("poco")
+    }
+    val isAndroid13Plus = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
 
     Column(
         modifier = Modifier
@@ -223,13 +251,46 @@ private fun NotificationPermissionCard(
         if (!isGranted) {
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Android 13+ Restricted Settings explicit walkthrough
+            // Primary CTA first: directly opens LyricSync notification access screen & triggers restriction if locked
+            Button(
+                onClick = onRequestNotificationAccess,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    text = "1. Adım: Bildirim Erişimini Aç",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = "Android 13+ cihazlarda önce bu düğmeye basıp LyricSync anahtarına dokunarak kısıtlama uyarısını tetikleyin.",
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Step 2: Android 13+ Restricted Settings Unlock Section (OEM-aware)
+            val unlockHighlight = hasAttemptedNotificationAccess
+            val unlockBgAlpha = if (unlockHighlight) 0.18f else 0.10f
+            val unlockBorderColor = if (unlockHighlight) {
+                Color(0xFFF59E0B)
+            } else {
+                Color(0xFFF59E0B).copy(alpha = 0.45f)
+            }
+            val unlockBorderWidth = if (unlockHighlight) 1.5.dp else 1.dp
+
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFFF59E0B).copy(alpha = 0.12f))
-                    .border(1.dp, Color(0xFFF59E0B).copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+                    .background(Color(0xFFF59E0B).copy(alpha = unlockBgAlpha))
+                    .border(unlockBorderWidth, unlockBorderColor, RoundedCornerShape(14.dp))
                     .padding(12.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -241,25 +302,45 @@ private fun NotificationPermissionCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "\"Güvenliğiniz için bu ayar kullanılamıyor\" uyarısı çözümü:",
+                        text = if (unlockHighlight) {
+                            "Kilit Uyarısı Tetiklendi — Şimdi Aşağıdan Kilidi Açın"
+                        } else {
+                            "\"Güvenliğiniz için bu ayar kullanılamıyor\" uyarısı çözümü:"
+                        },
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
+
                 Spacer(modifier = Modifier.height(6.dp))
+
+                val guideText = when {
+                    isTranssionHiOS ->
+                        "Algılanan Cihaz: Tecno / Infinix (HiOS)\n" +
+                            "1. Önce yukarıdaki 1. Adım'a basıp kilitli LyricSync anahtarına dokunarak uyarıyı tetikleyin (bunu yapmadan ⋮ menüsü gizli kalır).\n" +
+                            "2. Sonra 2.A ile Uygulama Bilgileri'ni açıp sağ üstteki ⋮ menüsünden \"Kısıtlanmış ayarlara izin ver\" deyin.\n" +
+                            "3. HiOS'ta sağ üstte ⋮ (üç nokta) hiç gözükmüyorsa aşağıdaki 2.B düğmesiyle oturum kurulumu yapın (sorun sürerse Play Store'dan SAI uygulamasıyla APK'yı kurabilirsiniz)."
+                    isXiaomi ->
+                        "Algılanan Cihaz: Xiaomi / Redmi / POCO (MIUI / HyperOS)\n" +
+                            "1. Önce yukarıdaki 1. Adım'a basıp kilitli LyricSync anahtarına dokunarak uyarıyı tetikleyin.\n" +
+                            "2. Sonra 2.A ile Uygulama Bilgileri'ni açın ve sayfanın en altına kaydırarak (veya sağ üst ⋮ menüsünden) \"Kısıtlanmış ayarlara izin ver\" onayını verin.\n" +
+                            "3. Seçenek çıkmazsa aşağıdaki 2.B oturum yükleyicisini deneyip 1. Adım'dan izni açın."
+                    else ->
+                        "1. Önce yukarıdaki 1. Adım'a basıp LyricSync anahtarına dokunarak kısıtlama uyarısını tetikleyin (aksi halde ⋮ menüsü görünmez).\n" +
+                            "2. Ardından 2.A ile Uygulama Bilgileri'ni açıp sağ üstteki ⋮ (üç nokta) menüsünden \"Kısıtlanmış ayarlara izin ver\" deyin ve 1. Adım'a geri dönüp izni açın.\n" +
+                            "3. Menü görünmüyorsa aşağıdaki 2.B oturum yükleyicisini deneyin."
+                }
+
                 Text(
-                    text = "Android 13+ dışarıdan kurulan APK'larda bu ayarı kilitler. Açmak için:\n" +
-                        "• Önce aşağıdaki 1.A düğmesiyle Uygulama Bilgileri'ni açın.\n" +
-                        "• Sağ üstteki ⋮ (üç nokta) menüsünden \"Kısıtlanmış ayarlara izin ver\" seçeneğine dokunun.\n" +
-                        "• Geri dönüp 1.B ile Bildirim Erişimi'ni açın.",
+                    text = guideText,
                     fontSize = 12.sp,
                     lineHeight = 17.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             OutlinedButton(
                 onClick = onOpenAppDetails,
@@ -276,24 +357,51 @@ private fun NotificationPermissionCard(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "1.A: Uygulama Bilgilerini Aç (Kısıtlanmış Ayar İzni)",
+                    text = "2.A: Uygulama Bilgilerini Aç (⋮ Kısıtlı Ayar İzni)",
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            if (isAndroid13Plus) {
+                Spacer(modifier = Modifier.height(8.dp))
 
-            Button(
-                onClick = onRequestNotificationAccess,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text(
-                    text = "1.B: Bildirim Erişimini Aç",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
+                OutlinedButton(
+                    onClick = onReinstallViaSession,
+                    enabled = !isSessionInstalling,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    if (isSessionInstalling) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Oturum Kurulumu Hazırlanıyor...",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.LockOpen,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "2.B: Oturum Yükleyicisi ile Kısıtlamayı Kaldır (Üç Nokta Yoksa)",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
             }
         }
     }

@@ -52,6 +52,10 @@
                 android:value="Real-time floating lyrics overlay window over media apps" />
         </service>
 
+        <receiver
+            android:name=".service.PackageInstallReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
