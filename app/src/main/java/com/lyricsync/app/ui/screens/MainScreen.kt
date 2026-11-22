@@ -1,6 +1,5 @@
 package com.lyricsync.app.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -457,7 +456,7 @@ fun MainScreen(
                             }
                         }
 
-                        AnimatedVisibility(
+                        androidx.compose.animation.AnimatedVisibility(
                             visible = isAutoScrollPaused &&
                                 lyricsState.isSynced &&
                                 activeLineIndex in lyricsState.lines.indices,
