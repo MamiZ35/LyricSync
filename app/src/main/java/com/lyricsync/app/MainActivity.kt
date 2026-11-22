@@ -12,8 +12,6 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.view.KeyEvent
@@ -25,7 +23,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,28 +35,27 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
-import com.lyricsync.app.data.remote.UpdateChecker
-import com.lyricsync.app.data.repository.LyricsRepository
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lyricsync.app.data.repository.MediaStateBus
 import com.lyricsync.app.domain.LyricLine
-import com.lyricsync.app.domain.ThemeMode
 import com.lyricsync.app.service.FloatingOverlayService
 import com.lyricsync.app.service.MediaNotificationListenerService
 import com.lyricsync.app.service.PackageInstallReceiver
+import com.lyricsync.app.ui.MainViewModel
 import com.lyricsync.app.ui.screens.MainScreen
 import com.lyricsync.app.ui.screens.PermissionOnboardingScreen
 import com.lyricsync.app.ui.theme.LyricSyncTheme
 import com.lyricsync.app.ui.util.LyricCardGenerator
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var repository: LyricsRepository
     private var pendingInstallApkFile: File? = null
     @Volatile
     private var isCreatingInstallSession = false
@@ -67,9 +63,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MediaStateBus.init(applicationContext)
-        repository = LyricsRepository.getInstance(applicationContext)
 
         setContent {
+            val viewModel: MainViewModel = viewModel()
+            val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+            val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
+            val autoLaunchSpotify by viewModel.autoLaunchSpotify.collectAsStateWithLifecycle()
+            val trackState by viewModel.trackState.collectAsStateWithLifecycle()
+
             var hasNotificationAccess by remember {
                 mutableStateOf(isNotificationServiceEnabled(this))
             }
@@ -150,27 +151,13 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            val trackState by MediaStateBus.trackState.collectAsState()
-            val lyricsState by MediaStateBus.lyricsState.collectAsState()
-            val activeLineIndex by MediaStateBus.activeLineIndex.collectAsState()
-            val isOverlayActive by MediaStateBus.isOverlayActive.collectAsState()
-            val themeMode by MediaStateBus.themeMode.collectAsState()
-            val displayMode by MediaStateBus.displayMode.collectAsState()
-            val translationEngine by MediaStateBus.translationEngine.collectAsState()
-            val overlayConfig by MediaStateBus.overlayConfig.collectAsState()
-            val wifiOnlyDownload by MediaStateBus.wifiOnlyDownload.collectAsState()
-            val keepScreenOn by MediaStateBus.keepScreenOn.collectAsState()
-            val autoHideOverlayOnPause by MediaStateBus.autoHideOverlayOnPause.collectAsState()
-            val autoLaunchSpotify by MediaStateBus.autoLaunchSpotify.collectAsState()
-            val loopRange by MediaStateBus.loopRange.collectAsState()
             val coroutineScope = rememberCoroutineScope()
-            var activeTranslationJob by remember { mutableStateOf<Job?>(null) }
             var autoLaunchAttempted by rememberSaveable { mutableStateOf(false) }
 
             LaunchedEffect(onboardingCompleted) {
                 if (onboardingCompleted && !autoLaunchAttempted) {
                     autoLaunchAttempted = true
-                    if (MediaStateBus.autoLaunchSpotify.value && !MediaStateBus.trackState.value.hasActiveTrack) {
+                    if (autoLaunchSpotify && !trackState.hasActiveTrack) {
                         wakeOrLaunchSpotify(returnToLyricSync = true)
                     }
                 }
@@ -191,9 +178,7 @@ class MainActivity : ComponentActivity() {
                         hasOverlayPermission = hasOverlayPermission,
                         hasAttemptedNotificationAccess = hasAttemptedNotificationAccess,
                         isSessionInstalling = isSessionInstalling,
-                        onOpenAppDetails = {
-                            openAppDetailsSettings()
-                        },
+                        onOpenAppDetails = { openAppDetailsSettings() },
                         onRequestNotificationAccess = {
                             hasAttemptedNotificationAccess = true
                             openNotificationListenerSettings()
@@ -203,179 +188,25 @@ class MainActivity : ComponentActivity() {
                                 isSessionInstalling = installing
                             }
                         },
-                        onRequestOverlayPermission = {
-                            openOverlaySettings()
-                        },
-                        onContinueToApp = {
-                            onboardingCompleted = true
-                        }
+                        onRequestOverlayPermission = { openOverlaySettings() },
+                        onContinueToApp = { onboardingCompleted = true }
                     )
                 } else {
                     MainScreen(
+                        viewModel = viewModel,
                         hasNotificationAccess = hasNotificationAccess,
-                        trackState = trackState,
-                        lyricsState = lyricsState,
-                        activeLineIndex = activeLineIndex,
-                        isOverlayActive = isOverlayActive,
-                        themeMode = themeMode,
-                        displayMode = displayMode,
-                        translationEngine = translationEngine,
-                        overlayConfig = overlayConfig,
-                        wifiOnlyDownload = wifiOnlyDownload,
-                        keepScreenOn = keepScreenOn,
-                        autoHideOverlayOnPause = autoHideOverlayOnPause,
-                        autoLaunchSpotify = autoLaunchSpotify,
-                        loopRange = loopRange,
-                        onOpenPermissions = {
-                            onboardingCompleted = false
-                        },
-                        onSelectThemeMode = { mode ->
-                            MediaStateBus.setThemeMode(mode)
-                        },
-                        onToggleKeepScreenOn = {
-                            MediaStateBus.setKeepScreenOn(!keepScreenOn)
-                        },
-                        onSetKeepScreenOn = { enabled ->
-                            MediaStateBus.setKeepScreenOn(enabled)
-                        },
-                        onSetAutoHideOverlayOnPause = { enabled ->
-                            MediaStateBus.setAutoHideOverlayOnPause(enabled)
-                        },
-                        onSetAutoLaunchSpotify = { enabled ->
-                            MediaStateBus.setAutoLaunchSpotify(enabled)
-                        },
-                        onLaunchSpotify = {
-                            wakeOrLaunchSpotify(returnToLyricSync = false)
-                        },
-                        onSetLoopRange = { range ->
-                            MediaStateBus.setLoopRange(range)
-                        },
-                        onAdjustSyncOffset = { deltaMs ->
-                            val newOffset = (lyricsState.syncOffsetMs + deltaMs).coerceIn(-15_000L, 15_000L)
-                            coroutineScope.launch {
-                                repository.updateSyncOffset(trackState, newOffset)
-                            }
-                        },
-                        onResetSyncOffset = {
-                            coroutineScope.launch {
-                                repository.updateSyncOffset(trackState, 0L)
-                            }
-                        },
-                        onSelectTargetLanguage = { langCode ->
-                            MediaStateBus.setTargetLanguage(langCode)
-                            if (trackState.hasActiveTrack && (trackState.isManualOverride || !hasNotificationAccess)) {
-                                activeTranslationJob?.cancel()
-                                activeTranslationJob = coroutineScope.launch {
-                                    repository.loadAndTranslateLyrics(trackState, langCode)
-                                }
-                            }
-                        },
-                        onSelectDisplayMode = { mode ->
-                            MediaStateBus.setDisplayMode(mode)
-                        },
-                        onSelectTranslationEngine = { engine ->
-                            MediaStateBus.setTranslationEngine(engine)
-                            if (trackState.hasActiveTrack && (trackState.isManualOverride || !hasNotificationAccess)) {
-                                activeTranslationJob?.cancel()
-                                activeTranslationJob = coroutineScope.launch {
-                                    repository.loadAndTranslateLyrics(
-                                        trackState,
-                                        MediaStateBus.targetLanguage.value
-                                    )
-                                }
-                            }
-                        },
+                        onOpenPermissions = { onboardingCompleted = false },
                         onToggleOverlay = {
                             if (!Settings.canDrawOverlays(this)) {
                                 openOverlaySettings()
-                            } else if (isOverlayActive) {
+                            } else if (viewModel.isOverlayActive.value) {
                                 FloatingOverlayService.stop(this)
                             } else {
                                 FloatingOverlayService.start(this)
                             }
                         },
-                        onRetryLyrics = {
-                            if (trackState.hasActiveTrack) {
-                                activeTranslationJob?.cancel()
-                                activeTranslationJob = coroutineScope.launch {
-                                    repository.loadAndTranslateLyrics(
-                                        trackState,
-                                        MediaStateBus.targetLanguage.value,
-                                        forceRefresh = true
-                                    )
-                                }
-                            }
-                        },
-                        onSeekToMs = { posMs ->
-                            MediaStateBus.onSeekToMs?.invoke(posMs)
-                        },
-                        onPlayPauseToggle = {
-                            MediaStateBus.onPlayPauseToggle?.invoke()
-                        },
-                        onSkipNext = {
-                            MediaStateBus.onSkipNext?.invoke()
-                        },
-                        onSkipPrevious = {
-                            MediaStateBus.onSkipPrevious?.invoke()
-                        },
-                        onSearchManual = { query ->
-                            repository.searchLyricsManual(query)
-                        },
-                        onSelectManualResult = { item ->
-                            activeTranslationJob?.cancel()
-                            activeTranslationJob = coroutineScope.launch {
-                                repository.selectManualLyrics(
-                                    item = item,
-                                    targetLang = MediaStateBus.targetLanguage.value
-                                )
-                            }
-                        },
-                        onUpdateOverlayConfig = { newConfig ->
-                            MediaStateBus.updateOverlayConfig(newConfig)
-                        },
-                        onSetWifiOnlyDownload = { wifiOnly ->
-                            MediaStateBus.setWifiOnlyDownload(wifiOnly)
-                        },
-                        onLoadCacheAndModels = {
-                            Pair(repository.getCachedSongCount(), repository.getDownloadedModels())
-                        },
-                        onClearCache = {
-                            repository.clearCache()
-                        },
-                        onDeleteModel = { langCode ->
-                            repository.deleteModel(langCode)
-                        },
-                        onLoadLibrarySummaries = {
-                            repository.getLibrarySummaries()
-                        },
-                        onToggleFavorite = { cacheKey, isFav ->
-                            repository.toggleFavorite(cacheKey, isFav)
-                            val currentLive = MediaStateBus.trackState.value
-                            val isCurrentPlayingTrack = !currentLive.isManualOverride &&
-                                currentLive.trackId.isNotBlank() &&
-                                cacheKey.contains("|${currentLive.trackId}|", ignoreCase = true)
-                            val syncedToPlayer = if (isCurrentPlayingTrack) {
-                                MediaStateBus.onSyncFavoriteToPlayer?.invoke(isFav) == true
-                            } else {
-                                false
-                            }
-                            if (isFav && !syncedToPlayer) {
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "LyricSync favorilerine eklendi",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        },
-                        onSelectCachedSong = { cacheKey ->
-                            activeTranslationJob?.cancel()
-                            activeTranslationJob = coroutineScope.launch {
-                                repository.loadCachedSongByKey(cacheKey)
-                            }
-                        },
-                        onCopyLine = { line ->
-                            copyLyricLine(line)
-                        },
+                        onLaunchSpotify = { wakeOrLaunchSpotify(returnToLyricSync = false) },
+                        onCopyLine = ::copyLyricLine,
                         onShareLine = { line ->
                             shareLyricLine(line, trackState.trackName, trackState.artistName)
                         },
@@ -388,27 +219,17 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         },
-                        onCheckForUpdate = {
-                            UpdateChecker.checkLatestRelease(BuildConfig.VERSION_NAME)
+                        onFavoriteFeedback = {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "LyricSync favorilerine eklendi",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         },
-                        onDownloadAndInstallApk = { url, onProgress, onComplete ->
-                            coroutineScope.launch {
-                                val file = UpdateChecker.downloadApk(
-                                    context = this@MainActivity,
-                                    downloadUrl = url,
-                                    onProgress = onProgress
-                                )
-                                if (file != null && file.exists()) {
-                                    onComplete(true)
-                                    installDownloadedApk(file)
-                                } else {
-                                    onComplete(false)
-                                }
-                            }
+                        onInstallApk = { file ->
+                            installDownloadedApk(file)
                         },
-                        onOpenDownloadUrl = { url ->
-                            openDownloadUrl(url)
-                        }
+                        onOpenDownloadUrl = ::openDownloadUrl
                     )
                 }
             }
@@ -618,8 +439,9 @@ class MainActivity : ComponentActivity() {
         runCatching { startActivity(spotifyIntent) }
 
         if (returnToLyricSync) {
-            Handler(Looper.getMainLooper()).postDelayed({
-                if (isFinishing || isDestroyed) return@postDelayed
+            lifecycleScope.launch {
+                delay(650L)
+                if (isFinishing || isDestroyed) return@launch
                 runCatching {
                     val playDown = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
                         setPackage(SPOTIFY_PACKAGE)
@@ -635,14 +457,15 @@ class MainActivity : ComponentActivity() {
                 if (MediaStateBus.trackState.value.let { it.hasActiveTrack && !it.isPlaying }) {
                     MediaStateBus.onPlayPauseToggle?.invoke()
                 }
+                // Best-effort return to foreground; Android 10+ BAL may suppress background startActivity
                 runCatching {
                     startActivity(
-                        Intent(this, MainActivity::class.java).addFlags(
+                        Intent(this@MainActivity, MainActivity::class.java).addFlags(
                             Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP
                         )
                     )
                 }
-            }, 650L)
+            }
         }
     }
 

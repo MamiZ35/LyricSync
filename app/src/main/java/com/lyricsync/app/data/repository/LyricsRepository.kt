@@ -22,9 +22,13 @@ import com.lyricsync.app.domain.LyricsState
 import com.lyricsync.app.domain.MediaTrackState
 import com.lyricsync.app.domain.TranslationEngine
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -35,6 +39,9 @@ class LyricsRepository private constructor(context: Context) {
     private val api = LrcLibApi.instance
     private val gson = Gson()
     private val lineListType = object : TypeToken<List<LyricLine>>() {}.type
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val jobLock = Any()
+    private var activeLoadJob: Job? = null
 
     companion object {
         @Volatile
@@ -44,6 +51,27 @@ class LyricsRepository private constructor(context: Context) {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: LyricsRepository(context.applicationContext).also { INSTANCE = it }
             }
+        }
+    }
+
+    fun requestLoadAndTranslate(
+        track: MediaTrackState,
+        targetLang: String,
+        preFetchedResponse: LrcLibResponse? = null,
+        forceRefresh: Boolean = false
+    ): Job {
+        synchronized(jobLock) {
+            activeLoadJob?.cancel()
+            val job = repositoryScope.launch {
+                loadAndTranslateLyrics(
+                    track = track,
+                    targetLang = targetLang,
+                    preFetchedResponse = preFetchedResponse,
+                    forceRefresh = forceRefresh
+                )
+            }
+            activeLoadJob = job
+            return job
         }
     }
 
@@ -359,7 +387,7 @@ class LyricsRepository private constructor(context: Context) {
             isManualOverride = true
         )
         MediaStateBus.updateTrackState(manualTrack)
-        loadAndTranslateLyrics(manualTrack, targetLang, preFetchedResponse = item)
+        requestLoadAndTranslate(manualTrack, targetLang, preFetchedResponse = item).join()
     }
 
     suspend fun getCachedSongCount(): Int = withContext(Dispatchers.IO) {
@@ -375,6 +403,10 @@ class LyricsRepository private constructor(context: Context) {
     }
 
     suspend fun loadCachedSongByKey(cacheKey: String) = withContext(Dispatchers.IO) {
+        synchronized(jobLock) {
+            activeLoadJob?.cancel()
+            activeLoadJob = null
+        }
         val entity = safeCatching { dao.getByKey(cacheKey) }.getOrNull() ?: return@withContext
         val cachedLines: List<LyricLine> = safeCatching {
             gson.fromJson<List<LyricLine>>(entity.linesJson, lineListType)
@@ -547,7 +579,9 @@ class LyricsRepository private constructor(context: Context) {
                     syncOffsetMs = existingOffset
                 )
             )
-            dao.pruneLeastRecentlyUsed(maxEntries = 500)
+            if (dao.count() > 500) {
+                dao.pruneLeastRecentlyUsed(maxEntries = 500)
+            }
         }
     }
 

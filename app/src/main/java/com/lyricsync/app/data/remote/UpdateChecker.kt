@@ -11,6 +11,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.URI
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class ReleaseInfo(
     val latestTag: String,
@@ -27,20 +28,22 @@ object UpdateChecker {
         "https://api.github.com/repos/MamiZ35/LyricSync/releases/latest"
 
     private val client: OkHttpClient by lazy {
-        OkHttpClient.Builder()
+        NetworkClient.baseOkHttpClient.newBuilder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
             .build()
     }
 
     private val downloadClient: OkHttpClient by lazy {
-        OkHttpClient.Builder()
+        NetworkClient.baseOkHttpClient.newBuilder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
             .build()
     }
+
+    private val isDownloadInProgress = AtomicBoolean(false)
 
     suspend fun checkLatestRelease(currentVersionName: String): ReleaseInfo? =
         withContext(Dispatchers.IO) {
@@ -93,6 +96,7 @@ object UpdateChecker {
         onProgress: (Int) -> Unit
     ): File? = withContext(Dispatchers.IO) {
         if (!isTrustedGithubUrl(downloadUrl)) return@withContext null
+        if (!isDownloadInProgress.compareAndSet(false, true)) return@withContext null
         val updateDir = File(context.cacheDir, "updates").apply { mkdirs() }
         val tmpFile = File(updateDir, "LyricSync-update.apk.tmp")
         val outFile = File(updateDir, "LyricSync-update.apk")
@@ -171,6 +175,8 @@ object UpdateChecker {
         } catch (_: Exception) {
             tmpFile.delete()
             null
+        } finally {
+            isDownloadInProgress.set(false)
         }
     }
 

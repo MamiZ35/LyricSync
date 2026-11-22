@@ -1,12 +1,10 @@
 package com.lyricsync.app.data.remote
 
-import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
 import retrofit2.http.Headers
 import retrofit2.http.Query
-import java.util.concurrent.TimeUnit
 
 data class LrcLibResponse(
     val id: Long? = null,
@@ -40,17 +38,10 @@ interface LrcLibApi {
     companion object {
         private const val BASE_URL = "https://lrclib.net/"
 
-        private val httpClient: OkHttpClient by lazy {
-            OkHttpClient.Builder()
-                .connectTimeout(10, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
-                .build()
-        }
-
         val instance: LrcLibApi by lazy {
             Retrofit.Builder()
                 .baseUrl(BASE_URL)
-                .client(httpClient)
+                .client(NetworkClient.baseOkHttpClient)
                 .addConverterFactory(GsonConverterFactory.create())
                 .build()
                 .create(LrcLibApi::class.java)

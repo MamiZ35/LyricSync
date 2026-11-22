@@ -9,16 +9,11 @@ import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.util.concurrent.TimeUnit
 
 object CloudTranslator {
 
-    private val client: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
-            .build()
-    }
+    private val client: OkHttpClient
+        get() = NetworkClient.baseOkHttpClient
 
     private val SLANG_REPLACEMENTS: List<Pair<Regex, String>> = listOf(
         Regex("\\b[Ii]\\s+ain't\\b") to "I am not",
@@ -41,13 +36,18 @@ object CloudTranslator {
     )
 
     private val NUMBER_PREFIX_REGEX = Regex("""^\d+[.)]\s*""")
+    private val NUMBER_MARKER_REGEX = Regex("""(?:^|\n)\s*(\d{1,4})[.)]\s*""")
 
     /**
      * Expands informal song contractions/slang to improve NMT grammar & meaning
      * without altering the displayed [LyricLine.originalText].
      */
     fun normalizeLyricText(line: String): String {
-        var normalized = line.trim()
+        val trimmed = line.trim()
+        if (trimmed.isEmpty() || trimmed.none { it in 'A'..'Z' || it in 'a'..'z' }) {
+            return trimmed
+        }
+        var normalized = trimmed
         for ((pattern, replacement) in SLANG_REPLACEMENTS) {
             normalized = pattern.replace(normalized, replacement)
         }
@@ -64,7 +64,8 @@ object CloudTranslator {
     ): Pair<String, List<LyricLine>>? = withContext(Dispatchers.IO) {
         if (lines.isEmpty()) return@withContext null
 
-        val chunks = chunkLinesByCharLimit(lines, maxChars = 3800)
+        val prepared = lines.map { line -> line to normalizeLyricText(line.originalText) }
+        val chunks = chunkPreparedLinesByCharLimit(prepared, maxChars = 3800)
         val resultLines = ArrayList<LyricLine>(lines.size)
         var detectedSourceLang = ""
 
@@ -80,32 +81,31 @@ object CloudTranslator {
     }
 
     private fun translateChunk(
-        chunk: List<LyricLine>,
+        chunk: List<Pair<LyricLine, String>>,
         targetLang: String
     ): Pair<String, List<LyricLine>>? {
-        val normalized = chunk.map { normalizeLyricText(it.originalText) }
-        val plainJoined = normalized.joinToString("\n")
+        val plainJoined = chunk.joinToString("\n") { it.second }
         val firstAttempt = executeRequest(plainJoined, targetLang) ?: return null
 
         val detectedLang = firstAttempt.second
         if (detectedLang.equals(targetLang, ignoreCase = true)) {
-            return Pair(detectedLang, chunk)
+            return Pair(detectedLang, chunk.map { it.first })
         }
 
         val translatedLines = firstAttempt.first.split("\n")
         if (translatedLines.size == chunk.size) {
-            val mapped = chunk.mapIndexed { index, line ->
+            val mapped = chunk.mapIndexed { index, (line, _) ->
                 line.copy(translatedText = translatedLines[index].trim())
             }
             return Pair(detectedLang, mapped)
         }
 
         // Fallback alignment: retry with explicit line numbers if the engine merged/split a newline
-        val numberedJoined = normalized.mapIndexed { idx, text -> "${idx + 1}. $text" }.joinToString("\n")
+        val numberedJoined = chunk.mapIndexed { idx, (_, norm) -> "${idx + 1}. $norm" }.joinToString("\n")
         val numberedAttempt = executeRequest(numberedJoined, targetLang) ?: return null
         val numberedLines = numberedAttempt.first.split("\n")
         if (numberedLines.size == chunk.size) {
-            val mapped = chunk.mapIndexed { index, line ->
+            val mapped = chunk.mapIndexed { index, (line, _) ->
                 val cleaned = numberedLines[index].trim().replaceFirst(NUMBER_PREFIX_REGEX, "")
                 line.copy(translatedText = cleaned)
             }
@@ -113,7 +113,7 @@ object CloudTranslator {
         }
 
         val recovered = recoverNumberedTranslations(numberedAttempt.first, chunk.size) ?: return null
-        val mappedRecovered = chunk.mapIndexed { index, line ->
+        val mappedRecovered = chunk.mapIndexed { index, (line, _) ->
             line.copy(translatedText = recovered[index].ifBlank { line.originalText })
         }
         return Pair(numberedAttempt.second, mappedRecovered)
@@ -121,8 +121,7 @@ object CloudTranslator {
 
     internal fun recoverNumberedTranslations(rawTranslated: String, expectedCount: Int): List<String>? {
         if (expectedCount <= 0) return emptyList()
-        val markerRegex = Regex("""(?:^|\n)\s*(\d{1,4})[.)]\s*""")
-        val matches = markerRegex.findAll(rawTranslated).toList()
+        val matches = NUMBER_MARKER_REGEX.findAll(rawTranslated).toList()
         if (matches.isEmpty()) return null
         val byNumber = HashMap<Int, String>(expectedCount)
         for (i in matches.indices) {
@@ -171,8 +170,8 @@ object CloudTranslator {
         }
     }
 
-    private fun parseResponse(body: String): Pair<String, String>? {
-        val root = JsonParser.parseString(body)
+    internal fun parseResponse(body: String): Pair<String, String>? {
+        val root = runCatching { JsonParser.parseString(body) }.getOrNull() ?: return null
         if (!root.isJsonArray) return null
         val outer = root.asJsonArray
         if (outer.size() == 0) return null
@@ -190,19 +189,27 @@ object CloudTranslator {
         }
     }
 
-    private fun chunkLinesByCharLimit(lines: List<LyricLine>, maxChars: Int): List<List<LyricLine>> {
-        val chunks = mutableListOf<List<LyricLine>>()
-        var current = mutableListOf<LyricLine>()
+    internal fun chunkLinesByCharLimit(lines: List<LyricLine>, maxChars: Int): List<List<LyricLine>> {
+        val prepared = lines.map { it to normalizeLyricText(it.originalText) }
+        return chunkPreparedLinesByCharLimit(prepared, maxChars).map { chunk -> chunk.map { it.first } }
+    }
+
+    private fun chunkPreparedLinesByCharLimit(
+        lines: List<Pair<LyricLine, String>>,
+        maxChars: Int
+    ): List<List<Pair<LyricLine, String>>> {
+        val chunks = mutableListOf<List<Pair<LyricLine, String>>>()
+        var current = mutableListOf<Pair<LyricLine, String>>()
         var charCount = 0
 
-        for (line in lines) {
-            val len = normalizeLyricText(line.originalText).length + 8
+        for (pair in lines) {
+            val len = pair.second.length + 8
             if (current.isNotEmpty() && charCount + len > maxChars) {
                 chunks.add(current)
                 current = mutableListOf()
                 charCount = 0
             }
-            current.add(line)
+            current.add(pair)
             charCount += len
         }
         if (current.isNotEmpty()) {

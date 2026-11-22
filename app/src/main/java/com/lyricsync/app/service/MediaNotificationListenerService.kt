@@ -1,5 +1,6 @@
 package com.lyricsync.app.service
 
+import android.app.Notification
 import android.content.ComponentName
 import android.content.Context
 import android.graphics.Bitmap
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MediaNotificationListenerService : NotificationListenerService() {
 
@@ -34,6 +36,7 @@ class MediaNotificationListenerService : NotificationListenerService() {
     private var mediaSessionManager: MediaSessionManager? = null
     private var activeController: MediaController? = null
     private var positionTickerJob: Job? = null
+    private var artProcessingJob: Job? = null
     private lateinit var repository: LyricsRepository
 
     private var lastSyncedControllerTrackId: String = ""
@@ -145,7 +148,7 @@ class MediaNotificationListenerService : NotificationListenerService() {
                 Pair(MediaStateBus.trackState.value, targetLang)
             }.collectLatest { (track, targetLang) ->
                 if (track.hasActiveTrack && !track.isManualOverride) {
-                    repository.loadAndTranslateLyrics(track, targetLang)
+                    repository.requestLoadAndTranslate(track, targetLang)
                 }
             }
         }
@@ -184,6 +187,12 @@ class MediaNotificationListenerService : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        if (sbn == null) return
+        val notification = sbn.notification
+        val isMediaNotification = notification.category == Notification.CATEGORY_TRANSPORT ||
+            notification.extras?.containsKey(Notification.EXTRA_MEDIA_SESSION) == true
+        if (!isMediaNotification) return
+
         // Re-evaluate sessions whenever a media notification arrives or current player is paused
         if (activeController == null ||
             activeController?.playbackState?.state != PlaybackState.STATE_PLAYING
@@ -285,27 +294,52 @@ class MediaNotificationListenerService : NotificationListenerService() {
 
         if (title.isBlank()) return
 
+        val trackState = MediaTrackState(
+            trackName = title,
+            artistName = artist,
+            packageName = controller.packageName,
+            durationMs = duration,
+            positionMs = position,
+            isPlaying = isPlaying,
+            albumArt = if (cachedArtTrackId == controllerTrackId) cachedAlbumArt else null,
+            accentColorArgb = if (cachedArtTrackId == controllerTrackId) cachedAccentColor else null,
+            isManualOverride = false
+        )
+        MediaStateBus.updateTrackState(trackState)
+
         if (cachedArtTrackId != controllerTrackId || cachedAlbumArt == null) {
             val rawArt = metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
                 ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_ART)
-            cachedArtTrackId = controllerTrackId
-            cachedAlbumArt = rawArt?.let { downscaleBitmap(it, 256) }
-            cachedAccentColor = cachedAlbumArt?.let { extractDominantColor(it) }
+            artProcessingJob?.cancel()
+            if (rawArt != null) {
+                artProcessingJob = serviceScope.launch {
+                    val processed = withContext(Dispatchers.Default) {
+                        val scaled = downscaleBitmap(rawArt, 256)
+                        val accent = extractDominantColor(scaled)
+                        Pair(scaled, accent)
+                    }
+                    if (lastSyncedControllerTrackId == controllerTrackId) {
+                        cachedArtTrackId = controllerTrackId
+                        cachedAlbumArt = processed.first
+                        cachedAccentColor = processed.second
+                        val current = MediaStateBus.trackState.value
+                        if (current.trackId == trackState.trackId && !current.isManualOverride) {
+                            MediaStateBus.updateTrackState(
+                                current.copy(
+                                    positionMs = MediaStateBus.playbackPositionMs.value,
+                                    albumArt = processed.first,
+                                    accentColorArgb = processed.second
+                                )
+                            )
+                        }
+                    }
+                }
+            } else {
+                cachedArtTrackId = controllerTrackId
+                cachedAlbumArt = null
+                cachedAccentColor = null
+            }
         }
-
-        MediaStateBus.updateTrackState(
-            MediaTrackState(
-                trackName = title,
-                artistName = artist,
-                packageName = controller.packageName,
-                durationMs = duration,
-                positionMs = position,
-                isPlaying = isPlaying,
-                albumArt = cachedAlbumArt,
-                accentColorArgb = cachedAccentColor,
-                isManualOverride = false
-            )
-        )
     }
 
     private fun startPositionTicker() {
@@ -367,6 +401,11 @@ class MediaNotificationListenerService : NotificationListenerService() {
     private fun cleanupController() {
         positionTickerJob?.cancel()
         positionTickerJob = null
+        artProcessingJob?.cancel()
+        artProcessingJob = null
+        cachedArtTrackId = ""
+        cachedAlbumArt = null
+        cachedAccentColor = null
         activeController?.unregisterCallback(controllerCallback)
         activeController = null
         lastSyncedControllerTrackId = ""

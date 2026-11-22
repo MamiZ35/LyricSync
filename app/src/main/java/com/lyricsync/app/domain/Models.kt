@@ -1,6 +1,7 @@
 package com.lyricsync.app.domain
 
 import android.graphics.Bitmap
+import androidx.compose.runtime.Immutable
 
 data class MediaTrackState(
     val trackName: String = "",
@@ -17,12 +18,14 @@ data class MediaTrackState(
     val trackId: String get() = "${artistName.lowercase().trim()}|${trackName.lowercase().trim()}"
 }
 
+@Immutable
 data class LyricLine(
     val timeMs: Long,
     val originalText: String,
     val translatedText: String = ""
 )
 
+@Immutable
 data class LyricsState(
     val trackId: String = "",
     val lines: List<LyricLine> = emptyList(),
@@ -44,6 +47,7 @@ enum class ThemeMode(val label: String) {
     LIGHT("Açık")
 }
 
+@Immutable
 data class LoopRange(
     val startLineIndex: Int,
     val endLineIndex: Int,
@@ -62,6 +66,7 @@ enum class TranslationEngine(val label: String) {
     ON_DEVICE_MLKIT("Cihaz İçi (Çevrimdışı ML Kit)")
 }
 
+@Immutable
 data class OverlayConfig(
     val fontSizeSp: Float = 15f,
     val opacity: Float = 0.90f,

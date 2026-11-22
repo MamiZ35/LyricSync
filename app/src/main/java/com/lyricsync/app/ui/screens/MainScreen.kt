@@ -1,18 +1,11 @@
 package com.lyricsync.app.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,55 +15,22 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BrightnessHigh
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.LibraryMusic
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.NotificationsOff
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PictureInPictureAlt
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Repeat
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.StarBorder
-import androidx.compose.material.icons.filled.Translate
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -79,7 +39,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -87,96 +46,55 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.google.mlkit.nl.translate.TranslateLanguage
-import com.lyricsync.app.data.local.CachedSongSummary
-import com.lyricsync.app.data.remote.LrcLibResponse
-import com.lyricsync.app.data.remote.ReleaseInfo
-import com.lyricsync.app.domain.LoopRange
-import com.lyricsync.app.domain.LyricDisplayMode
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lyricsync.app.domain.LyricLine
-import com.lyricsync.app.domain.LyricsState
-import com.lyricsync.app.domain.MediaTrackState
-import com.lyricsync.app.domain.OverlayConfig
-import com.lyricsync.app.domain.ThemeMode
-import com.lyricsync.app.domain.TranslationEngine
+import com.lyricsync.app.ui.MainViewModel
+import com.lyricsync.app.ui.components.EmptyLyricsPlaceholder
+import com.lyricsync.app.ui.components.InstrumentalCountdownBanner
+import com.lyricsync.app.ui.components.LibraryAndStatsDialog
+import com.lyricsync.app.ui.components.LineActionsDialog
+import com.lyricsync.app.ui.components.LyricLineRow
+import com.lyricsync.app.ui.components.ManualSearchDialog
+import com.lyricsync.app.ui.components.NowPlayingCard
+import com.lyricsync.app.ui.components.StatusBanner
+import com.lyricsync.app.ui.components.TopHeaderBar
+import com.lyricsync.app.ui.components.TrackSeekSlider
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import java.util.Locale
-
-private val SUPPORTED_TARGET_LANGUAGES = listOf(
-    TranslateLanguage.TURKISH to "Türkçe (TR)",
-    TranslateLanguage.ENGLISH to "English (EN)",
-    TranslateLanguage.GERMAN to "Deutsch (DE)",
-    TranslateLanguage.SPANISH to "Español (ES)",
-    TranslateLanguage.FRENCH to "Français (FR)",
-    TranslateLanguage.ITALIAN to "Italiano (IT)",
-    TranslateLanguage.RUSSIAN to "Русский (RU)",
-    TranslateLanguage.JAPANESE to "日本語 (JA)",
-    TranslateLanguage.KOREAN to "한국어 (KO)",
-    TranslateLanguage.ARABIC to "العربية (AR)"
-)
+import java.io.File
 
 @Composable
 fun MainScreen(
+    viewModel: MainViewModel,
     hasNotificationAccess: Boolean,
-    trackState: MediaTrackState,
-    lyricsState: LyricsState,
-    activeLineIndex: Int,
-    isOverlayActive: Boolean,
-    themeMode: ThemeMode,
-    displayMode: LyricDisplayMode,
-    translationEngine: TranslationEngine,
-    overlayConfig: OverlayConfig,
-    wifiOnlyDownload: Boolean,
-    keepScreenOn: Boolean,
-    autoHideOverlayOnPause: Boolean,
-    loopRange: LoopRange?,
     onOpenPermissions: () -> Unit,
-    onSelectThemeMode: (ThemeMode) -> Unit,
-    onToggleKeepScreenOn: () -> Unit,
-    onSetKeepScreenOn: (Boolean) -> Unit,
-    onSetAutoHideOverlayOnPause: (Boolean) -> Unit,
-    autoLaunchSpotify: Boolean,
-    onSetAutoLaunchSpotify: (Boolean) -> Unit,
-    onLaunchSpotify: () -> Unit,
-    onSetLoopRange: (LoopRange?) -> Unit,
-    onAdjustSyncOffset: (Long) -> Unit,
-    onResetSyncOffset: () -> Unit,
-    onSelectTargetLanguage: (String) -> Unit,
-    onSelectDisplayMode: (LyricDisplayMode) -> Unit,
-    onSelectTranslationEngine: (TranslationEngine) -> Unit,
     onToggleOverlay: () -> Unit,
-    onRetryLyrics: () -> Unit,
-    onSeekToMs: (Long) -> Unit,
-    onPlayPauseToggle: () -> Unit,
-    onSkipNext: () -> Unit,
-    onSkipPrevious: () -> Unit,
-    onSearchManual: suspend (String) -> List<LrcLibResponse>,
-    onSelectManualResult: (LrcLibResponse) -> Unit,
-    onUpdateOverlayConfig: (OverlayConfig) -> Unit,
-    onSetWifiOnlyDownload: (Boolean) -> Unit,
-    onLoadCacheAndModels: suspend () -> Pair<Int, List<String>>,
-    onClearCache: suspend () -> Unit,
-    onDeleteModel: suspend (String) -> Unit,
-    onLoadLibrarySummaries: suspend () -> List<CachedSongSummary>,
-    onToggleFavorite: suspend (String, Boolean) -> Unit,
-    onSelectCachedSong: (String) -> Unit,
+    onLaunchSpotify: () -> Unit,
     onCopyLine: (LyricLine) -> Unit,
     onShareLine: (LyricLine) -> Unit,
     onShareImageCard: (LyricLine) -> Unit,
-    onCheckForUpdate: suspend () -> ReleaseInfo?,
-    onDownloadAndInstallApk: (String, (Int) -> Unit, (Boolean) -> Unit) -> Unit,
+    onFavoriteFeedback: () -> Unit,
+    onInstallApk: (File) -> Unit,
     onOpenDownloadUrl: (String) -> Unit
 ) {
+    val trackState by viewModel.trackState.collectAsStateWithLifecycle()
+    val lyricsState by viewModel.lyricsState.collectAsStateWithLifecycle()
+    val activeLineIndex by viewModel.activeLineIndex.collectAsStateWithLifecycle()
+    val isOverlayActive by viewModel.isOverlayActive.collectAsStateWithLifecycle()
+    val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val displayMode by viewModel.displayMode.collectAsStateWithLifecycle()
+    val translationEngine by viewModel.translationEngine.collectAsStateWithLifecycle()
+    val overlayConfig by viewModel.overlayConfig.collectAsStateWithLifecycle()
+    val wifiOnlyDownload by viewModel.wifiOnlyDownload.collectAsStateWithLifecycle()
+    val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
+    val autoHideOverlayOnPause by viewModel.autoHideOverlayOnPause.collectAsStateWithLifecycle()
+    val autoLaunchSpotify by viewModel.autoLaunchSpotify.collectAsStateWithLifecycle()
+    val loopRange by viewModel.loopRange.collectAsStateWithLifecycle()
+    val updateUiState by viewModel.updateUiState.collectAsStateWithLifecycle()
+
     val listState = rememberLazyListState()
     var showSearchDialog by remember { mutableStateOf(false) }
     var showLibraryDialog by remember { mutableStateOf(false) }
@@ -264,7 +182,6 @@ fun MainScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             if (isAmbientFullscreen) {
-                // Minimal fullscreen ambient header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -293,7 +210,7 @@ fun MainScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        IconButton(onClick = onToggleKeepScreenOn) {
+                        IconButton(onClick = viewModel::toggleKeepScreenOn) {
                             Icon(
                                 imageVector = Icons.Default.BrightnessHigh,
                                 contentDescription = "Ekranı Açık Tut",
@@ -328,17 +245,16 @@ fun MainScreen(
                 if (trackState.hasActiveTrack && !trackState.isManualOverride) {
                     Spacer(modifier = Modifier.height(8.dp))
                     TrackSeekSlider(
-                        positionMs = trackState.positionMs,
+                        playbackPositionFlow = viewModel.playbackPositionMs,
                         durationMs = trackState.durationMs,
                         isPlaying = trackState.isPlaying,
-                        onSeekToMs = onSeekToMs,
-                        onPlayPauseToggle = onPlayPauseToggle,
-                        onSkipPrevious = onSkipPrevious,
-                        onSkipNext = onSkipNext
+                        onSeekToMs = viewModel::seekToMs,
+                        onPlayPauseToggle = viewModel::playPauseToggle,
+                        onSkipPrevious = viewModel::skipPrevious,
+                        onSkipNext = viewModel::skipNext
                     )
                 }
             } else {
-                // Top Control Bar + Quick Action Chips
                 TopHeaderBar(
                     targetLang = lyricsState.targetLang,
                     displayMode = displayMode,
@@ -346,20 +262,21 @@ fun MainScreen(
                     keepScreenOn = keepScreenOn,
                     syncOffsetMs = lyricsState.syncOffsetMs,
                     showSyncOffset = lyricsState.isSynced && lyricsState.lines.isNotEmpty(),
-                    onToggleKeepScreenOn = onToggleKeepScreenOn,
+                    onToggleKeepScreenOn = viewModel::toggleKeepScreenOn,
                     onEnterAmbient = { isAmbientFullscreen = true },
-                    onAdjustSyncOffset = onAdjustSyncOffset,
-                    onResetSyncOffset = onResetSyncOffset,
-                    onSelectTargetLanguage = onSelectTargetLanguage,
-                    onSelectDisplayMode = onSelectDisplayMode,
+                    onAdjustSyncOffset = viewModel::adjustSyncOffset,
+                    onResetSyncOffset = viewModel::resetSyncOffset,
+                    onSelectTargetLanguage = { lang ->
+                        viewModel.selectTargetLanguage(lang, hasNotificationAccess)
+                    },
+                    onSelectDisplayMode = viewModel::setDisplayMode,
                     onToggleOverlay = onToggleOverlay,
                     onOpenSearch = { showSearchDialog = true },
                     onOpenLibrary = { showLibraryDialog = true },
                     onOpenSettings = { showSettingsDialog = true },
-                    onRetryLyrics = onRetryLyrics
+                    onRetryLyrics = viewModel::retryLyrics
                 )
 
-                // Notification Access Warning Banner (when user entered via Manual Search mode)
                 if (!hasNotificationAccess) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(
@@ -390,30 +307,28 @@ fun MainScreen(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Now Playing Track Card with Album Art & Transport Controls
                 NowPlayingCard(
                     trackState = trackState,
                     lyricsState = lyricsState,
-                    onSeekToMs = onSeekToMs,
-                    onPlayPauseToggle = onPlayPauseToggle,
-                    onSkipPrevious = onSkipPrevious,
-                    onSkipNext = onSkipNext,
+                    playbackPositionFlow = viewModel.playbackPositionMs,
+                    onSeekToMs = viewModel::seekToMs,
+                    onPlayPauseToggle = viewModel::playPauseToggle,
+                    onSkipPrevious = viewModel::skipPrevious,
+                    onSkipNext = viewModel::skipNext,
                     onLaunchSpotify = onLaunchSpotify,
                     onOpenSearch = { showSearchDialog = true }
                 )
             }
 
-            // ML Kit Model Download / Status Banner
-            if (lyricsState.statusMessage != null) {
+            lyricsState.statusMessage?.let { statusMsg ->
                 Spacer(modifier = Modifier.height(10.dp))
                 StatusBanner(
-                    message = lyricsState.statusMessage,
+                    message = statusMsg,
                     isDownloading = lyricsState.isDownloadingModel
                 )
             }
 
-            // Feature 9: Active A-B / Stanza Loop Banner
-            if (loopRange != null) {
+            loopRange?.let { activeLoop ->
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier
@@ -434,13 +349,13 @@ fun MainScreen(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Kıta Döngüsü (Satır ${loopRange.startLineIndex + 1}–${loopRange.endLineIndex + 1})",
+                            text = "Kıta Döngüsü (Satır ${activeLoop.startLineIndex + 1}–${activeLoop.endLineIndex + 1})",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
                     TextButton(
-                        onClick = { onSetLoopRange(null) },
+                        onClick = { viewModel.setLoopRange(null) },
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                     ) {
                         Text("Kapat", fontSize = 11.sp, color = Color(0xFFF59E0B), fontWeight = FontWeight.Bold)
@@ -448,54 +363,15 @@ fun MainScreen(
                 }
             }
 
-            // Feature W1: Instrumental / Intro Countdown Pill (only during genuine long gaps while playing)
-            val instrumentalGap = remember(
-                trackState.hasActiveTrack,
-                trackState.isPlaying,
-                trackState.positionMs,
-                trackState.isManualOverride,
-                lyricsState.isSynced,
-                lyricsState.lines,
-                activeLineIndex
-            ) {
-                if (!trackState.hasActiveTrack ||
-                    !trackState.isPlaying ||
-                    !lyricsState.isSynced ||
-                    lyricsState.lines.isEmpty() ||
-                    trackState.isManualOverride
-                ) {
-                    null
-                } else if (activeLineIndex == -1) {
-                    val nextTime = lyricsState.lines[0].timeMs
-                    val remaining = nextTime - trackState.positionMs
-                    if (trackState.positionMs >= 300L && nextTime >= 4_000L && remaining in 1_000L..60_000L) {
-                        remaining
-                    } else {
-                        null
-                    }
-                } else if (activeLineIndex in 0 until lyricsState.lines.lastIndex) {
-                    val curTime = lyricsState.lines[activeLineIndex].timeMs
-                    val nextTime = lyricsState.lines[activeLineIndex + 1].timeMs
-                    val gap = nextTime - curTime
-                    val elapsed = trackState.positionMs - curTime
-                    val remaining = nextTime - trackState.positionMs
-                    if (gap >= 14_000L && elapsed >= 6_000L && remaining in 1_000L..60_000L) {
-                        remaining
-                    } else {
-                        null
-                    }
-                } else {
-                    null
-                }
-            }
-            if (instrumentalGap != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                InstrumentalCountdownBanner(remainingMs = instrumentalGap)
-            }
+            InstrumentalCountdownBanner(
+                trackState = trackState,
+                lyricsState = lyricsState,
+                activeLineIndex = activeLineIndex,
+                playbackPositionFlow = viewModel.playbackPositionMs
+            )
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Lyrics Viewport
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -559,8 +435,9 @@ fun MainScreen(
                             ) { index, line ->
                                 val isActive = lyricsState.isSynced && index == activeLineIndex
                                 val isPast = lyricsState.isSynced && activeLineIndex > index
-                                val isInLoop = loopRange != null &&
-                                    index in loopRange.startLineIndex..loopRange.endLineIndex
+                                val activeLoop = loopRange
+                                val isInLoop = activeLoop != null &&
+                                    index in activeLoop.startLineIndex..activeLoop.endLineIndex
                                 val canSeek = lyricsState.isSynced && !trackState.isManualOverride
                                 LyricLineRow(
                                     line = line,
@@ -570,17 +447,17 @@ fun MainScreen(
                                     isInLoop = isInLoop,
                                     isSynced = lyricsState.isSynced,
                                     canSeek = canSeek,
-                                    onSeek = { onSeekToMs(line.timeMs) },
+                                    onSeek = {
+                                        viewModel.seekToMs((line.timeMs - lyricsState.syncOffsetMs).coerceAtLeast(0L))
+                                    },
                                     onLongPress = {
-                                        onCopyLine(line)
                                         selectedLineIndexForActions = index
                                     }
                                 )
                             }
                         }
 
-                        // Floating "Jump back to active line" button while manual scrolling pauses auto-follow
-                        androidx.compose.animation.AnimatedVisibility(
+                        AnimatedVisibility(
                             visible = isAutoScrollPaused &&
                                 lyricsState.isSynced &&
                                 activeLineIndex in lyricsState.lines.indices,
@@ -614,103 +491,17 @@ fun MainScreen(
     selectedLineIndexForActions?.let { selectedIdx ->
         val line = lyricsState.lines.getOrNull(selectedIdx)
         if (line != null) {
-            AlertDialog(
-                onDismissRequest = { selectedLineIndexForActions = null },
-                title = { Text("Söz İşlemleri", fontWeight = FontWeight.Bold) },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            text = line.originalText,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 15.sp
-                        )
-                        if (line.translatedText.isNotBlank() && line.translatedText != line.originalText) {
-                            Text(
-                                text = line.translatedText,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontSize = 14.sp
-                            )
-                        }
-                        Text(
-                            text = "Panoya kopyalandı ✓",
-                            fontSize = 12.sp,
-                            color = Color(0xFF10B981)
-                        )
-
-                        Button(
-                            onClick = {
-                                onShareImageCard(line)
-                                selectedLineIndexForActions = null
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(17.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Görsel Kart Paylaş (PNG)")
-                        }
-
-                        if (lyricsState.isSynced && !trackState.isManualOverride) {
-                            OutlinedButton(
-                                onClick = {
-                                    val endIdx = (selectedIdx + 3).coerceAtMost(lyricsState.lines.lastIndex)
-                                    val startMs = lyricsState.lines[selectedIdx].timeMs
-                                    val rawEndMs = if (endIdx + 1 < lyricsState.lines.size) {
-                                        lyricsState.lines[endIdx + 1].timeMs
-                                    } else {
-                                        val fallback = lyricsState.lines[endIdx].timeMs + 12_000L
-                                        if (trackState.durationMs > 0L) fallback.coerceAtMost(trackState.durationMs) else fallback
-                                    }
-                                    val safeEndMs = maxOf(rawEndMs, startMs + 4000L)
-                                    onSetLoopRange(LoopRange(selectedIdx, endIdx, startMs, safeEndMs))
-                                    onSeekToMs(startMs)
-                                    selectedLineIndexForActions = null
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Icon(Icons.Default.Repeat, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Bu Kıta İçin Döngü Başlat (4 Satır)", fontSize = 12.sp)
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedButton(
-                                onClick = {
-                                    onCopyLine(line)
-                                    selectedLineIndexForActions = null
-                                },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Kopyala", fontSize = 12.sp)
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    onShareLine(line)
-                                    selectedLineIndexForActions = null
-                                },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Metin Paylaş", fontSize = 12.sp)
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { selectedLineIndexForActions = null }) {
-                        Text("Kapat")
-                    }
-                }
+            LineActionsDialog(
+                selectedIdx = selectedIdx,
+                line = line,
+                lyricsState = lyricsState,
+                trackState = trackState,
+                onShareImageCard = onShareImageCard,
+                onSetLoopRange = viewModel::setLoopRange,
+                onSeekToMs = viewModel::seekToMs,
+                onCopyLine = onCopyLine,
+                onShareLine = onShareLine,
+                onDismiss = { selectedLineIndexForActions = null }
             )
         }
     }
@@ -719,21 +510,26 @@ fun MainScreen(
         ManualSearchDialog(
             initialQuery = trackState.trackName,
             onDismiss = { showSearchDialog = false },
-            onSearch = onSearchManual,
+            onSearch = viewModel::searchManual,
             onSelect = { item ->
                 showSearchDialog = false
-                onSelectManualResult(item)
+                viewModel.selectManualResult(item)
             }
         )
     }
 
     if (showLibraryDialog) {
         LibraryAndStatsDialog(
-            onLoadSummaries = onLoadLibrarySummaries,
-            onToggleFavorite = onToggleFavorite,
+            onLoadSummaries = viewModel::loadLibrarySummaries,
+            onToggleFavorite = { cacheKey, isFav ->
+                val syncedToPlayer = viewModel.toggleFavorite(cacheKey, isFav)
+                if (isFav && !syncedToPlayer) {
+                    onFavoriteFeedback()
+                }
+            },
             onSelectSong = { cacheKey ->
                 showLibraryDialog = false
-                onSelectCachedSong(cacheKey)
+                viewModel.selectCachedSong(cacheKey)
             },
             onDismiss = { showLibraryDialog = false }
         )
@@ -748,1267 +544,26 @@ fun MainScreen(
             translationEngine = translationEngine,
             wifiOnlyDownload = wifiOnlyDownload,
             autoHideOverlayOnPause = autoHideOverlayOnPause,
-            onSelectThemeMode = onSelectThemeMode,
-            onSetKeepScreenOn = onSetKeepScreenOn,
-            onSetAutoLaunchSpotify = onSetAutoLaunchSpotify,
-            onUpdateOverlayConfig = onUpdateOverlayConfig,
-            onSelectTranslationEngine = onSelectTranslationEngine,
-            onSetWifiOnlyDownload = onSetWifiOnlyDownload,
-            onSetAutoHideOverlayOnPause = onSetAutoHideOverlayOnPause,
-            onLoadCacheAndModels = onLoadCacheAndModels,
-            onClearCache = onClearCache,
-            onDeleteModel = onDeleteModel,
-            onCheckForUpdate = onCheckForUpdate,
-            onDownloadAndInstallApk = onDownloadAndInstallApk,
+            updateUiState = updateUiState,
+            onSelectThemeMode = viewModel::setThemeMode,
+            onSetKeepScreenOn = viewModel::setKeepScreenOn,
+            onSetAutoLaunchSpotify = viewModel::setAutoLaunchSpotify,
+            onPreviewOverlayConfig = viewModel::previewOverlayConfig,
+            onCommitOverlayConfig = viewModel::commitOverlayConfig,
+            onSelectTranslationEngine = { engine ->
+                viewModel.selectTranslationEngine(engine, hasNotificationAccess)
+            },
+            onSetWifiOnlyDownload = viewModel::setWifiOnlyDownload,
+            onSetAutoHideOverlayOnPause = viewModel::setAutoHideOverlayOnPause,
+            onLoadCacheAndModels = viewModel::loadCacheAndModels,
+            onClearCache = viewModel::clearCache,
+            onDeleteModel = viewModel::deleteModel,
+            onCheckForUpdate = viewModel::checkForUpdate,
+            onDownloadAndInstallApk = { url ->
+                viewModel.downloadApk(url, onReadyToInstall = onInstallApk)
+            },
             onOpenDownloadUrl = onOpenDownloadUrl,
             onDismiss = { showSettingsDialog = false }
         )
     }
-}
-
-@Composable
-private fun TopHeaderBar(
-    targetLang: String,
-    displayMode: LyricDisplayMode,
-    isOverlayActive: Boolean,
-    keepScreenOn: Boolean,
-    syncOffsetMs: Long,
-    showSyncOffset: Boolean,
-    onToggleKeepScreenOn: () -> Unit,
-    onEnterAmbient: () -> Unit,
-    onAdjustSyncOffset: (Long) -> Unit,
-    onResetSyncOffset: () -> Unit,
-    onSelectTargetLanguage: (String) -> Unit,
-    onSelectDisplayMode: (LyricDisplayMode) -> Unit,
-    onToggleOverlay: () -> Unit,
-    onOpenSearch: () -> Unit,
-    onOpenLibrary: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onRetryLyrics: () -> Unit
-) {
-    var langMenuExpanded by remember { mutableStateOf(false) }
-    var displayMenuExpanded by remember { mutableStateOf(false) }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.MusicNote,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(19.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "LyricSync",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onOpenSearch) {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = "Manuel Şarkı Ara",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                IconButton(onClick = onOpenLibrary) {
-                    Icon(
-                        imageVector = Icons.Default.LibraryMusic,
-                        contentDescription = "Kütüphane & İstatistik",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                IconButton(onClick = onOpenSettings) {
-                    Icon(
-                        imageVector = Icons.Default.Tune,
-                        contentDescription = "Ayarlar & Modeller",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                IconButton(onClick = onRetryLyrics) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Yenile",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // Scrollable compact action chips row (Language, Display Mode, Overlay)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Target Language Picker Chip
-            Box {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .clickable { langMenuExpanded = true }
-                        .padding(horizontal = 10.dp, vertical = 6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Translate,
-                        contentDescription = "Hedef Dil",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text(
-                        text = "Dil: ${targetLang.uppercase()}",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-
-                DropdownMenu(
-                    expanded = langMenuExpanded,
-                    onDismissRequest = { langMenuExpanded = false }
-                ) {
-                    SUPPORTED_TARGET_LANGUAGES.forEach { (code, label) ->
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = label,
-                                    fontWeight = if (code == targetLang) FontWeight.Bold else FontWeight.Normal
-                                )
-                            },
-                            onClick = {
-                                langMenuExpanded = false
-                                onSelectTargetLanguage(code)
-                            }
-                        )
-                    }
-                }
-            }
-
-            // Display Mode Switcher Chip
-            Box {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .clickable { displayMenuExpanded = true }
-                        .padding(horizontal = 10.dp, vertical = 6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Visibility,
-                        contentDescription = "Görünüm Modu",
-                        tint = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text(
-                        text = displayMode.label,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-
-                DropdownMenu(
-                    expanded = displayMenuExpanded,
-                    onDismissRequest = { displayMenuExpanded = false }
-                ) {
-                    LyricDisplayMode.entries.forEach { mode ->
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = mode.label,
-                                    fontWeight = if (mode == displayMode) FontWeight.Bold else FontWeight.Normal
-                                )
-                            },
-                            onClick = {
-                                displayMenuExpanded = false
-                                onSelectDisplayMode(mode)
-                            }
-                        )
-                    }
-                }
-            }
-
-            // Floating Overlay Toggle Chip
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(
-                        if (isOverlayActive) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.surfaceVariant
-                    )
-                    .clickable { onToggleOverlay() }
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PictureInPictureAlt,
-                    contentDescription = "Yüzen Altyazı",
-                    tint = if (isOverlayActive) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(15.dp)
-                )
-                Spacer(modifier = Modifier.width(5.dp))
-                Text(
-                    text = if (isOverlayActive) "Overlay Açık" else "Yüzen Pencere",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (isOverlayActive) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.onSurface
-                )
-            }
-
-            // Keep Screen On Toggle Chip
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(
-                        if (keepScreenOn) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.25f)
-                        else MaterialTheme.colorScheme.surfaceVariant
-                    )
-                    .clickable { onToggleKeepScreenOn() }
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.BrightnessHigh,
-                    contentDescription = "Ekranı Açık Tut",
-                    tint = if (keepScreenOn) MaterialTheme.colorScheme.tertiary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(15.dp)
-                )
-                Spacer(modifier = Modifier.width(5.dp))
-                Text(
-                    text = if (keepScreenOn) "Ekran Açık ✓" else "Ekran Açık",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
-
-            // Fullscreen Ambient Lyrics Mode Chip
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .clickable { onEnterAmbient() }
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Fullscreen,
-                    contentDescription = "Ambiyans Modu",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(15.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "Ambiyans",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
-
-            if (showSyncOffset) {
-                val offsetSec = syncOffsetMs / 1000.0
-                val offsetLabel = when {
-                    syncOffsetMs == 0L -> "Senkron: 0.0s"
-                    syncOffsetMs > 0L -> String.format(Locale.US, "Senkron: +%.1fs", offsetSec)
-                    else -> String.format(Locale.US, "Senkron: %.1fs", offsetSec)
-                }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(
-                            if (syncOffsetMs != 0L) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                            else MaterialTheme.colorScheme.surfaceVariant
-                        )
-                        .padding(horizontal = 4.dp, vertical = 3.dp)
-                ) {
-                    Text(
-                        text = "-0.5s",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(onClickLabel = "Sözleri 0.5 saniye geri al") {
-                                onAdjustSyncOffset(-500L)
-                            }
-                            .padding(horizontal = 7.dp, vertical = 4.dp)
-                    )
-                    Text(
-                        text = offsetLabel,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(onClickLabel = "Senkron kaydırmayı sıfırla") {
-                                onResetSyncOffset()
-                            }
-                            .padding(horizontal = 6.dp, vertical = 4.dp)
-                    )
-                    Text(
-                        text = "+0.5s",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(onClickLabel = "Sözleri 0.5 saniye ileri al") {
-                                onAdjustSyncOffset(500L)
-                            }
-                            .padding(horizontal = 7.dp, vertical = 4.dp)
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TrackSeekSlider(
-    positionMs: Long,
-    durationMs: Long,
-    isPlaying: Boolean,
-    onSeekToMs: (Long) -> Unit,
-    onPlayPauseToggle: () -> Unit,
-    onSkipPrevious: () -> Unit,
-    onSkipNext: () -> Unit
-) {
-    var isDragging by remember(durationMs) { mutableStateOf(false) }
-    var dragProgress by remember(durationMs) { mutableStateOf(0f) }
-    val progress = if (durationMs > 0L) {
-        (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-    } else {
-        0f
-    }
-    val displayedProgress = if (isDragging) dragProgress else progress
-    val displayedPosMs = if (durationMs > 0L) {
-        (displayedProgress * durationMs.toFloat()).toLong()
-    } else {
-        positionMs
-    }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Slider(
-            value = displayedProgress,
-            onValueChange = { value ->
-                if (durationMs > 0L) {
-                    isDragging = true
-                    dragProgress = value.coerceIn(0f, 1f)
-                }
-            },
-            onValueChangeFinished = {
-                if (durationMs > 0L) {
-                    val targetMs = (dragProgress * durationMs.toFloat()).toLong()
-                    onSeekToMs(targetMs)
-                }
-                isDragging = false
-            },
-            enabled = durationMs > 0L,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(28.dp)
-        )
-        Spacer(modifier = Modifier.height(2.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = formatDuration(displayedPosMs),
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                IconButton(onClick = onSkipPrevious, modifier = Modifier.size(38.dp)) {
-                    Icon(
-                        imageVector = Icons.Default.SkipPrevious,
-                        contentDescription = "Önceki",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
-                        .clickable(onClickLabel = if (isPlaying) "Duraklat" else "Oynat") {
-                            onPlayPauseToggle()
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (isPlaying) "Duraklat" else "Oynat",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-                IconButton(onClick = onSkipNext, modifier = Modifier.size(38.dp)) {
-                    Icon(
-                        imageVector = Icons.Default.SkipNext,
-                        contentDescription = "Sonraki",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-            }
-
-            Text(
-                text = formatDuration(durationMs),
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun NowPlayingCard(
-    trackState: MediaTrackState,
-    lyricsState: LyricsState,
-    onSeekToMs: (Long) -> Unit,
-    onPlayPauseToggle: () -> Unit,
-    onSkipPrevious: () -> Unit,
-    onSkipNext: () -> Unit,
-    onLaunchSpotify: () -> Unit,
-    onOpenSearch: () -> Unit
-) {
-    val shape = RoundedCornerShape(22.dp)
-    val accentColor = trackState.accentColorArgb?.let { Color(it) } ?: MaterialTheme.colorScheme.primary
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(
-                Brush.linearGradient(
-                    listOf(
-                        accentColor.copy(alpha = 0.22f),
-                        MaterialTheme.colorScheme.surface,
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
-                    )
-                )
-            )
-            .border(
-                width = 1.dp,
-                color = accentColor.copy(alpha = 0.35f),
-                shape = shape
-            )
-            .padding(14.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(54.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(accentColor.copy(alpha = 0.18f)),
-                contentAlignment = Alignment.Center
-            ) {
-                if (trackState.albumArt != null) {
-                    Image(
-                        bitmap = trackState.albumArt.asImageBitmap(),
-                        contentDescription = "Albüm Kapağı",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Default.MusicNote,
-                        contentDescription = null,
-                        tint = accentColor,
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = if (trackState.hasActiveTrack) trackState.trackName else "Şarkı Çalmıyor",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = if (trackState.hasActiveTrack) trackState.artistName else "Spotify başlatın veya manuel arayın",
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            // Metadata Badges (Language pair, Manual mode & Room cache indicator)
-            Column(horizontalAlignment = Alignment.End) {
-                if (lyricsState.sourceLang.isNotBlank()) {
-                    Text(
-                        text = "${lyricsState.sourceLang.uppercase()} → ${lyricsState.targetLang.uppercase()}",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
-                            .padding(horizontal = 8.dp, vertical = 3.dp)
-                    )
-                }
-                if (lyricsState.isFromCache) {
-                    Spacer(modifier = Modifier.height(3.dp))
-                    Text(
-                        text = "Önbellek ✓",
-                        fontSize = 10.sp,
-                        color = Color(0xFF10B981),
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-                if (trackState.isManualOverride) {
-                    Spacer(modifier = Modifier.height(3.dp))
-                    Text(
-                        text = "Manuel",
-                        fontSize = 10.sp,
-                        color = Color(0xFFF59E0B),
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
-        }
-
-        if (trackState.hasActiveTrack && !trackState.isManualOverride) {
-            Spacer(modifier = Modifier.height(6.dp))
-            TrackSeekSlider(
-                positionMs = trackState.positionMs,
-                durationMs = trackState.durationMs,
-                isPlaying = trackState.isPlaying,
-                onSeekToMs = onSeekToMs,
-                onPlayPauseToggle = onPlayPauseToggle,
-                onSkipPrevious = onSkipPrevious,
-                onSkipNext = onSkipNext
-            )
-        } else if (!trackState.hasActiveTrack) {
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Button(
-                    onClick = onLaunchSpotify,
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "Spotify'ı Başlat",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                OutlinedButton(
-                    onClick = onOpenSearch,
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "Manuel Söz Ara",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun InstrumentalCountdownBanner(remainingMs: Long) {
-    val remainingSec = ((remainingMs + 999L) / 1000L).coerceAtLeast(1L)
-
-    Box(
-        modifier = Modifier.fillMaxWidth(),
-        contentAlignment = Alignment.Center
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
-                .border(
-                    1.dp,
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-                    CircleShape
-                )
-                .padding(horizontal = 14.dp, vertical = 6.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.MusicNote,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(16.dp)
-            )
-            Text(
-                text = "${remainingSec}s",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-        }
-    }
-}
-
-@Composable
-private fun StatusBanner(
-    message: String,
-    isDownloading: Boolean
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f))
-            .border(
-                1.dp,
-                MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f),
-                RoundedCornerShape(14.dp)
-            )
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (isDownloading) {
-            Icon(
-                imageVector = Icons.Default.CloudDownload,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp)
-            )
-        } else {
-            CircularProgressIndicator(
-                modifier = Modifier.size(16.dp),
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-        Spacer(modifier = Modifier.width(10.dp))
-        Text(
-            text = message,
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.Medium
-        )
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun LyricLineRow(
-    line: LyricLine,
-    displayMode: LyricDisplayMode,
-    isActive: Boolean,
-    isPast: Boolean,
-    isInLoop: Boolean,
-    isSynced: Boolean,
-    canSeek: Boolean,
-    onSeek: () -> Unit,
-    onLongPress: () -> Unit
-) {
-    val scale by animateFloatAsState(
-        targetValue = if (isActive) 1.03f else 1.0f,
-        animationSpec = tween(durationMillis = 240),
-        label = "LyricScale"
-    )
-    val bgColor by animateColorAsState(
-        targetValue = when {
-            isActive -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-            isInLoop -> Color(0xFFF59E0B).copy(alpha = 0.08f)
-            else -> Color.Transparent
-        },
-        animationSpec = tween(durationMillis = 240),
-        label = "LyricBg"
-    )
-
-    val originalColor = when {
-        !isSynced -> MaterialTheme.colorScheme.onSurface
-        isActive -> MaterialTheme.colorScheme.onBackground
-        isPast -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f)
-        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
-    }
-
-    val translationColor = when {
-        !isSynced -> MaterialTheme.colorScheme.primary.copy(alpha = 0.92f)
-        isActive -> MaterialTheme.colorScheme.primary
-        isPast -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
-        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f)
-    }
-
-    val hasTranslation = line.translatedText.isNotBlank() && line.translatedText != line.originalText
-    val showOriginal = displayMode == LyricDisplayMode.DUAL ||
-        displayMode == LyricDisplayMode.ORIGINAL_ONLY ||
-        (displayMode == LyricDisplayMode.TRANSLATION_ONLY && !hasTranslation)
-    val showTranslation = hasTranslation && (
-        displayMode == LyricDisplayMode.DUAL ||
-            displayMode == LyricDisplayMode.TRANSLATION_ONLY
-        )
-
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .fillMaxWidth()
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
-            .clip(RoundedCornerShape(18.dp))
-            .background(bgColor)
-            .then(
-                when {
-                    isActive -> Modifier.border(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
-                        shape = RoundedCornerShape(18.dp)
-                    )
-                    isInLoop -> Modifier.border(
-                        width = 1.dp,
-                        color = Color(0xFFF59E0B).copy(alpha = 0.45f),
-                        shape = RoundedCornerShape(18.dp)
-                    )
-                    else -> Modifier
-                }
-            )
-            .combinedClickable(
-                onClickLabel = if (canSeek) "Bu satıra sar" else null,
-                onLongClickLabel = "Söz işlemleri ve paylaşım",
-                onClick = { if (canSeek) onSeek() },
-                onLongClick = { onLongPress() }
-            )
-            .padding(horizontal = 18.dp, vertical = 14.dp)
-    ) {
-        if (showOriginal) {
-            Text(
-                text = line.originalText,
-                color = originalColor,
-                fontSize = if (isActive) 21.sp else 17.sp,
-                fontWeight = if (isActive) FontWeight.ExtraBold else FontWeight.SemiBold,
-                textAlign = TextAlign.Center,
-                lineHeight = if (isActive) 27.sp else 23.sp
-            )
-        }
-
-        if (showTranslation) {
-            if (showOriginal) Spacer(modifier = Modifier.height(5.dp))
-            val isTranslationPrimary = displayMode == LyricDisplayMode.TRANSLATION_ONLY
-            Text(
-                text = line.translatedText,
-                color = if (isTranslationPrimary) originalColor else translationColor,
-                fontSize = when {
-                    isTranslationPrimary && isActive -> 20.sp
-                    isTranslationPrimary -> 17.sp
-                    isActive -> 16.sp
-                    else -> 14.sp
-                },
-                fontWeight = when {
-                    isTranslationPrimary && isActive -> FontWeight.ExtraBold
-                    isTranslationPrimary || isActive -> FontWeight.SemiBold
-                    else -> FontWeight.Normal
-                },
-                textAlign = TextAlign.Center,
-                lineHeight = if (isActive) 23.sp else 19.sp
-            )
-        }
-    }
-}
-
-@Composable
-private fun ManualSearchDialog(
-    initialQuery: String,
-    onDismiss: () -> Unit,
-    onSearch: suspend (String) -> List<LrcLibResponse>,
-    onSelect: (LrcLibResponse) -> Unit
-) {
-    var query by remember { mutableStateOf(initialQuery) }
-    var isSearching by remember { mutableStateOf(false) }
-    var hasSearched by remember { mutableStateOf(false) }
-    var results by remember { mutableStateOf<List<LrcLibResponse>>(emptyList()) }
-    val scope = rememberCoroutineScope()
-
-    fun triggerSearch() {
-        val q = query.trim()
-        if (q.isEmpty()) return
-        scope.launch {
-            isSearching = true
-            hasSearched = true
-            results = onSearch(q)
-            isSearching = false
-        }
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(text = "Manuel Şarkı / Söz Ara", fontWeight = FontWeight.Bold)
-        },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    label = { Text("Şarkı veya sanatçı adı") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { triggerSearch() }),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(
-                    onClick = { triggerSearch() },
-                    enabled = query.isNotBlank() && !isSearching,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text("LRCLIB'de Ara")
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                when {
-                    isSearching -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(120.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator()
-                        }
-                    }
-                    hasSearched && results.isEmpty() -> {
-                        Text(
-                            text = "Sonuç bulunamadı. Şarkı ve sanatçı adını sadeleştirerek tekrar deneyin.",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 12.dp)
-                        )
-                    }
-                    results.isNotEmpty() -> {
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 260.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(results) { item ->
-                                val isSyncedItem = !item.syncedLyrics.isNullOrBlank()
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                                        .clickable { onSelect(item) }
-                                        .padding(10.dp)
-                                ) {
-                                    Text(
-                                        text = item.trackName ?: "Bilinmeyen Şarkı",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = item.artistName ?: "",
-                                            fontSize = 12.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = if (isSyncedItem) "Senkronize" else "Düz Metin",
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = if (isSyncedItem) Color(0xFF10B981) else MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Kapat") }
-        }
-    )
-}
-
-@Composable
-private fun LibraryAndStatsDialog(
-    onLoadSummaries: suspend () -> List<CachedSongSummary>,
-    onToggleFavorite: suspend (String, Boolean) -> Unit,
-    onSelectSong: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var summaries by remember { mutableStateOf<List<CachedSongSummary>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
-    var favoritesOnly by remember { mutableStateOf(false) }
-    var librarySearchQuery by remember { mutableStateOf("") }
-    val scope = rememberCoroutineScope()
-
-    fun reload() {
-        scope.launch {
-            isLoading = true
-            summaries = onLoadSummaries()
-            isLoading = false
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        reload()
-    }
-
-    val favoriteCount = remember(summaries) { summaries.count { it.isFavorite } }
-    val topLanguages = remember(summaries) {
-        summaries
-            .groupingBy { it.sourceLang.ifBlank { "?" }.uppercase() }
-            .eachCount()
-            .entries
-            .sortedByDescending { it.value }
-            .take(4)
-            .joinToString(" • ") { "${it.key} (${it.value})" }
-    }
-    val topArtists = remember(summaries) {
-        summaries
-            .filter { it.artistName.isNotBlank() }
-            .groupingBy { it.artistName }
-            .eachCount()
-            .entries
-            .sortedByDescending { it.value }
-            .take(3)
-            .joinToString(", ") { "${it.key} (${it.value})" }
-    }
-    val displayed = remember(summaries, favoritesOnly, librarySearchQuery) {
-        val base = if (favoritesOnly) summaries.filter { it.isFavorite } else summaries
-        val q = librarySearchQuery.trim()
-        if (q.isEmpty()) {
-            base
-        } else {
-            base.filter {
-                it.trackName.contains(q, ignoreCase = true) ||
-                    it.artistName.contains(q, ignoreCase = true)
-            }
-        }
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(text = "Kütüphane & LyricSync Özeti", fontWeight = FontWeight.Bold)
-        },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                // Feature 22: Listening & Translation Stats Summary Card
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
-                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "Çevrilen: ${summaries.size} şarkı",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = "⭐ Favori: $favoriteCount",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFF59E0B)
-                        )
-                    }
-                    if (topLanguages.isNotBlank()) {
-                        Text(
-                            text = "Diller: $topLanguages",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    if (topArtists.isNotBlank()) {
-                        Text(
-                            text = "Sanatçılar: $topArtists",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-
-                // Filter tabs: All / Favorites
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    val allSelected = !favoritesOnly
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (allSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable { favoritesOnly = false }
-                    ) {
-                        Text(
-                            text = "Tümü (${summaries.size})",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (allSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-                    }
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (!allSelected) Color(0xFFF59E0B) else MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable { favoritesOnly = true }
-                    ) {
-                        Text(
-                            text = "⭐ Favoriler ($favoriteCount)",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (!allSelected) Color.Black else MaterialTheme.colorScheme.onSurface,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-                    }
-                }
-
-                OutlinedTextField(
-                    value = librarySearchQuery,
-                    onValueChange = { librarySearchQuery = it },
-                    placeholder = { Text("Kütüphanede şarkı veya sanatçı ara...", fontSize = 12.sp) },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    },
-                    trailingIcon = {
-                        if (librarySearchQuery.isNotEmpty()) {
-                            IconButton(
-                                onClick = { librarySearchQuery = "" },
-                                modifier = Modifier.size(28.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Aramayı Temizle",
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                when {
-                    isLoading -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(120.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator()
-                        }
-                    }
-                    displayed.isEmpty() -> {
-                        Text(
-                            text = when {
-                                librarySearchQuery.isNotBlank() -> "Aramanızla eşleşen şarkı bulunamadı."
-                                favoritesOnly -> "Henüz favori şarkınız yok."
-                                else -> "Henüz çevrilmiş şarkı bulunmuyor."
-                            },
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 16.dp)
-                        )
-                    }
-                    else -> {
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 260.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(displayed, key = { it.cacheKey }) { item ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
-                                        .clickable { onSelectSong(item.cacheKey) }
-                                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = item.trackName,
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = "${item.artistName} • ${item.sourceLang.uppercase()} → ${item.targetLang.uppercase()}",
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            scope.launch {
-                                                onToggleFavorite(item.cacheKey, !item.isFavorite)
-                                                reload()
-                                            }
-                                        },
-                                        modifier = Modifier.size(40.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = if (item.isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
-                                            contentDescription = "Favori",
-                                            tint = if (item.isFavorite) Color(0xFFF59E0B) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Kapat") }
-        }
-    )
-}
-
-@Composable
-private fun EmptyLyricsPlaceholder(
-    title: String,
-    subtitle: String,
-    onOpenSearch: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            imageVector = Icons.Default.MusicNote,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
-            modifier = Modifier.size(56.dp)
-        )
-        Spacer(modifier = Modifier.height(14.dp))
-        Text(
-            text = title,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onBackground,
-            textAlign = TextAlign.Center
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = subtitle,
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
-        )
-        Spacer(modifier = Modifier.height(18.dp))
-        OutlinedButton(onClick = onOpenSearch, shape = RoundedCornerShape(14.dp)) {
-            Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(6.dp))
-            Text("Manuel Şarkı Sözü Ara")
-        }
-    }
-}
-
-private fun formatDuration(durationMs: Long): String {
-    val totalSeconds = (durationMs / 1000L).coerceAtLeast(0L)
-    val minutes = totalSeconds / 60L
-    val seconds = totalSeconds % 60L
-    return "%02d:%02d".format(minutes, seconds)
 }

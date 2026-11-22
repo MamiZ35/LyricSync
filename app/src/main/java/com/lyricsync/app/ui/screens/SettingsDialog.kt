@@ -49,6 +49,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,11 +70,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.lyricsync.app.BuildConfig
-import com.lyricsync.app.data.remote.ReleaseInfo
 import com.lyricsync.app.data.remote.UpdateChecker
 import com.lyricsync.app.domain.OverlayConfig
 import com.lyricsync.app.domain.ThemeMode
 import com.lyricsync.app.domain.TranslationEngine
+import com.lyricsync.app.ui.UpdateUiState
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -93,18 +94,20 @@ internal fun SettingsAndModelsDialog(
     translationEngine: TranslationEngine,
     wifiOnlyDownload: Boolean,
     autoHideOverlayOnPause: Boolean,
+    updateUiState: UpdateUiState,
     onSelectThemeMode: (ThemeMode) -> Unit,
     onSetKeepScreenOn: (Boolean) -> Unit,
     onSetAutoLaunchSpotify: (Boolean) -> Unit,
-    onUpdateOverlayConfig: (OverlayConfig) -> Unit,
+    onPreviewOverlayConfig: (OverlayConfig) -> Unit,
+    onCommitOverlayConfig: (OverlayConfig) -> Unit,
     onSelectTranslationEngine: (TranslationEngine) -> Unit,
     onSetWifiOnlyDownload: (Boolean) -> Unit,
     onSetAutoHideOverlayOnPause: (Boolean) -> Unit,
     onLoadCacheAndModels: suspend () -> Pair<Int, List<String>>,
     onClearCache: suspend () -> Unit,
     onDeleteModel: suspend (String) -> Unit,
-    onCheckForUpdate: suspend () -> ReleaseInfo?,
-    onDownloadAndInstallApk: (String, (Int) -> Unit, (Boolean) -> Unit) -> Unit,
+    onCheckForUpdate: () -> Unit,
+    onDownloadAndInstallApk: (String) -> Unit,
     onOpenDownloadUrl: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -112,11 +115,6 @@ internal fun SettingsAndModelsDialog(
     var cachedCount by remember { mutableStateOf(0) }
     var downloadedModels by remember { mutableStateOf<List<String>>(emptyList()) }
     var isRefreshing by remember { mutableStateOf(true) }
-    var isCheckingUpdate by remember { mutableStateOf(false) }
-    var isDownloadingApk by remember { mutableStateOf(false) }
-    var downloadProgress by remember { mutableStateOf(0) }
-    var updateStatus by remember { mutableStateOf<String?>(null) }
-    var releaseInfo by remember { mutableStateOf<ReleaseInfo?>(null) }
     val scope = rememberCoroutineScope()
 
     fun refreshStats() {
@@ -225,7 +223,8 @@ internal fun SettingsAndModelsDialog(
                         1 -> OverlaySettingsTab(
                             overlayConfig = overlayConfig,
                             autoHideOverlayOnPause = autoHideOverlayOnPause,
-                            onUpdateOverlayConfig = onUpdateOverlayConfig,
+                            onPreviewOverlayConfig = onPreviewOverlayConfig,
+                            onCommitOverlayConfig = onCommitOverlayConfig,
                             onSetAutoHideOverlayOnPause = onSetAutoHideOverlayOnPause
                         )
                         2 -> TranslationSettingsTab(
@@ -250,45 +249,17 @@ internal fun SettingsAndModelsDialog(
                             }
                         )
                         else -> UpdateSettingsTab(
-                            updateStatus = updateStatus,
-                            releaseInfo = releaseInfo,
-                            isCheckingUpdate = isCheckingUpdate,
-                            isDownloadingApk = isDownloadingApk,
-                            downloadProgress = downloadProgress,
-                            onCheckForUpdate = {
-                                scope.launch {
-                                    isCheckingUpdate = true
-                                    updateStatus = "GitHub kontrol ediliyor..."
-                                    val info = onCheckForUpdate()
-                                    releaseInfo = info
-                                    updateStatus = when {
-                                        info == null -> "Güncelleme bilgisi alınamadı."
-                                        info.isUpdateAvailable -> "Yeni sürüm bulundu: ${info.latestTag}"
-                                        else -> "Güncel sürümü (${info.latestTag}) kullanıyorsunuz ✓"
-                                    }
-                                    isCheckingUpdate = false
-                                }
-                            },
+                            updateUiState = updateUiState,
+                            onCheckForUpdate = onCheckForUpdate,
                             onDownloadAndInstall = {
-                                val targetUrl = releaseInfo?.downloadUrl ?: UpdateChecker.LATEST_APK_URL
-                                isDownloadingApk = true
-                                downloadProgress = 0
-                                updateStatus = "Güncelleme paketi indiriliyor..."
-                                onDownloadAndInstallApk(
-                                    targetUrl,
-                                    { pct -> downloadProgress = pct },
-                                    { success ->
-                                        isDownloadingApk = false
-                                        updateStatus = if (success) {
-                                            "İndirme tamamlandı, yükleyici açılıyor..."
-                                        } else {
-                                            "İndirme başarısız. Tarayıcıdan indirmeyi deneyin."
-                                        }
-                                    }
-                                )
+                                val targetUrl = updateUiState.releaseInfo?.downloadUrl
+                                    ?: UpdateChecker.LATEST_APK_URL
+                                onDownloadAndInstallApk(targetUrl)
                             },
                             onOpenBrowser = {
-                                onOpenDownloadUrl(releaseInfo?.downloadUrl ?: UpdateChecker.LATEST_APK_URL)
+                                onOpenDownloadUrl(
+                                    updateUiState.releaseInfo?.downloadUrl ?: UpdateChecker.LATEST_APK_URL
+                                )
                             }
                         )
                     }
@@ -436,32 +407,48 @@ private fun AppearanceSettingsTab(
 private fun OverlaySettingsTab(
     overlayConfig: OverlayConfig,
     autoHideOverlayOnPause: Boolean,
-    onUpdateOverlayConfig: (OverlayConfig) -> Unit,
+    onPreviewOverlayConfig: (OverlayConfig) -> Unit,
+    onCommitOverlayConfig: (OverlayConfig) -> Unit,
     onSetAutoHideOverlayOnPause: (Boolean) -> Unit
 ) {
+    var sliderFontSize by remember(overlayConfig.fontSizeSp) {
+        mutableFloatStateOf(overlayConfig.fontSizeSp)
+    }
+    var sliderOpacity by remember(overlayConfig.opacity) {
+        mutableFloatStateOf(overlayConfig.opacity)
+    }
+
     OverlayLivePreviewCard(overlayConfig = overlayConfig)
 
     SettingsSectionCard(title = "Yazı Boyutu & Opaklık") {
         SliderHeaderRow(
             label = "Yazı Boyutu",
-            valueText = "${overlayConfig.fontSizeSp.roundToInt()} sp"
+            valueText = "${sliderFontSize.roundToInt()} sp"
         )
         Slider(
-            value = overlayConfig.fontSizeSp,
+            value = sliderFontSize,
             onValueChange = { newSize ->
-                onUpdateOverlayConfig(overlayConfig.copy(fontSizeSp = newSize))
+                sliderFontSize = newSize
+                onPreviewOverlayConfig(overlayConfig.copy(fontSizeSp = newSize))
+            },
+            onValueChangeFinished = {
+                onCommitOverlayConfig(overlayConfig.copy(fontSizeSp = sliderFontSize))
             },
             valueRange = 12f..24f
         )
 
         SliderHeaderRow(
             label = "Arka Plan Opaklığı",
-            valueText = "%${(overlayConfig.opacity * 100).roundToInt()}"
+            valueText = "%${(sliderOpacity * 100).roundToInt()}"
         )
         Slider(
-            value = overlayConfig.opacity,
+            value = sliderOpacity,
             onValueChange = { newOpacity ->
-                onUpdateOverlayConfig(overlayConfig.copy(opacity = newOpacity))
+                sliderOpacity = newOpacity
+                onPreviewOverlayConfig(overlayConfig.copy(opacity = newOpacity))
+            },
+            onValueChangeFinished = {
+                onCommitOverlayConfig(overlayConfig.copy(opacity = sliderOpacity))
             },
             valueRange = 0.35f..1.0f
         )
@@ -473,7 +460,7 @@ private fun OverlaySettingsTab(
             subtitle = "Aktif sözün altında bir sonraki satırı küçük gösterir.",
             checked = overlayConfig.showNextLine,
             onCheckedChange = { show ->
-                onUpdateOverlayConfig(overlayConfig.copy(showNextLine = show))
+                onCommitOverlayConfig(overlayConfig.copy(showNextLine = show))
             }
         )
         SettingsSwitchRow(
@@ -487,7 +474,7 @@ private fun OverlaySettingsTab(
             subtitle = "Açıkken pencere sürüklenemez ve kontrol butonları gizlenir; 🔒 simgesiyle açabilirsiniz.",
             checked = overlayConfig.isTouchLocked,
             onCheckedChange = { locked ->
-                onUpdateOverlayConfig(overlayConfig.copy(isTouchLocked = locked))
+                onCommitOverlayConfig(overlayConfig.copy(isTouchLocked = locked))
             }
         )
     }
@@ -712,11 +699,7 @@ private fun TranslationSettingsTab(
 
 @Composable
 private fun UpdateSettingsTab(
-    updateStatus: String?,
-    releaseInfo: ReleaseInfo?,
-    isCheckingUpdate: Boolean,
-    isDownloadingApk: Boolean,
-    downloadProgress: Int,
+    updateUiState: UpdateUiState,
     onCheckForUpdate: () -> Unit,
     onDownloadAndInstall: () -> Unit,
     onOpenBrowser: () -> Unit
@@ -736,10 +719,11 @@ private fun UpdateSettingsTab(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = updateStatus ?: "GitHub Releases üzerinden yeni sürümü tek dokunuşla kurabilirsiniz.",
+                text = updateUiState.statusMessage
+                    ?: "GitHub Releases üzerinden yeni sürümü tek dokunuşla kurabilirsiniz.",
                 fontSize = 12.sp,
-                fontWeight = if (updateStatus != null) FontWeight.Medium else FontWeight.Normal,
-                color = if (releaseInfo?.isUpdateAvailable == true) {
+                fontWeight = if (updateUiState.statusMessage != null) FontWeight.Medium else FontWeight.Normal,
+                color = if (updateUiState.releaseInfo?.isUpdateAvailable == true) {
                     Color(0xFF10B981)
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
@@ -747,16 +731,16 @@ private fun UpdateSettingsTab(
             )
         }
 
-        if (isDownloadingApk) {
+        if (updateUiState.isDownloading) {
             LinearProgressIndicator(
-                progress = { downloadProgress / 100f },
+                progress = { updateUiState.downloadProgress / 100f },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(6.dp)
                     .clip(RoundedCornerShape(3.dp))
             )
             Text(
-                text = "APK indiriliyor: %$downloadProgress",
+                text = "APK indiriliyor: %${updateUiState.downloadProgress}",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -768,25 +752,28 @@ private fun UpdateSettingsTab(
         ) {
             OutlinedButton(
                 onClick = onCheckForUpdate,
-                enabled = !isCheckingUpdate && !isDownloadingApk,
+                enabled = !updateUiState.isChecking && !updateUiState.isDownloading,
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text(
-                    text = if (isCheckingUpdate) "Kontrol..." else "Kontrol Et",
+                    text = if (updateUiState.isChecking) "Kontrol..." else "Kontrol Et",
                     fontSize = 12.sp
                 )
             }
 
             Button(
                 onClick = onDownloadAndInstall,
-                enabled = !isDownloadingApk,
+                enabled = !updateUiState.isDownloading,
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(15.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text(if (isDownloadingApk) "%$downloadProgress" else "İndir & Kur", fontSize = 12.sp)
+                Text(
+                    text = if (updateUiState.isDownloading) "%${updateUiState.downloadProgress}" else "İndir & Kur",
+                    fontSize = 12.sp
+                )
             }
         }
 

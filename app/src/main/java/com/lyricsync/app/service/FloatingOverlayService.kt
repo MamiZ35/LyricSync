@@ -49,11 +49,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -132,6 +132,10 @@ class FloatingOverlayService : Service(),
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!Settings.canDrawOverlays(this)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         when (intent?.action) {
             ACTION_STOP_OVERLAY -> {
                 stopSelf()
@@ -139,7 +143,6 @@ class FloatingOverlayService : Service(),
             }
             ACTION_TOGGLE_LOCK -> {
                 MediaStateBus.toggleOverlayTouchLock()
-                updateTouchLockWindowFlag(MediaStateBus.overlayConfig.value.isTouchLocked)
             }
         }
         return START_STICKY
@@ -196,7 +199,7 @@ class FloatingOverlayService : Service(),
                         MediaStateBus.toggleOverlayTouchLock()
                     },
                     onTouchLockChanged = { locked ->
-                        updateTouchLockWindowFlag(locked)
+                        updateLockNotification(locked)
                     },
                     onClose = { stopSelf() }
                 )
@@ -209,22 +212,22 @@ class FloatingOverlayService : Service(),
         }
     }
 
-    private fun updateTouchLockWindowFlag(isLocked: Boolean) {
+    private fun updateLockNotification(isLocked: Boolean) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIFICATION_ID, buildForegroundNotification(isLocked))
     }
 
     override fun onDestroy() {
         MediaStateBus.setOverlayActive(false)
+        overlayView?.let { view ->
+            runCatching { view.disposeComposition() }
+            runCatching { windowManager?.removeView(view) }
+        }
+        overlayView = null
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
-
-        overlayView?.let { view ->
-            runCatching { windowManager?.removeView(view) }
-        }
-        overlayView = null
         super.onDestroy()
     }
 
@@ -313,12 +316,12 @@ private fun FloatingSubtitleOverlayContent(
     onTouchLockChanged: (Boolean) -> Unit,
     onClose: () -> Unit
 ) {
-    val trackState by MediaStateBus.trackState.collectAsState()
-    val lyricsState by MediaStateBus.lyricsState.collectAsState()
-    val activeIndex by MediaStateBus.activeLineIndex.collectAsState()
-    val overlayConfig by MediaStateBus.overlayConfig.collectAsState()
-    val displayMode by MediaStateBus.displayMode.collectAsState()
-    val autoHideOnPause by MediaStateBus.autoHideOverlayOnPause.collectAsState()
+    val trackState by MediaStateBus.trackState.collectAsStateWithLifecycle()
+    val lyricsState by MediaStateBus.lyricsState.collectAsStateWithLifecycle()
+    val activeIndex by MediaStateBus.activeLineIndex.collectAsStateWithLifecycle()
+    val overlayConfig by MediaStateBus.overlayConfig.collectAsStateWithLifecycle()
+    val displayMode by MediaStateBus.displayMode.collectAsStateWithLifecycle()
+    val autoHideOnPause by MediaStateBus.autoHideOverlayOnPause.collectAsStateWithLifecycle()
     var isCollapsed by remember { mutableStateOf(false) }
     var isAutoHidden by remember { mutableStateOf(false) }
     var lastNotifiedLockState by remember { mutableStateOf(overlayConfig.isTouchLocked) }
@@ -370,7 +373,7 @@ private fun FloatingSubtitleOverlayContent(
     Box(
         modifier = Modifier
             .padding(6.dp)
-            .widthIn(min = if (isCollapsed) 48.dp else 260.dp, max = 350.dp)
+            .widthIn(min = if (isCollapsed) 48.dp else 272.dp, max = 350.dp)
             .clip(shape)
             .background(
                 Brush.verticalGradient(
@@ -466,43 +469,57 @@ private fun FloatingSubtitleOverlayContent(
                         )
                     }
 
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
 
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(44.dp)
                             .clip(CircleShape)
-                            .background(
-                                if (overlayConfig.isTouchLocked) Color(0x44FBBF24) else Color(0x33FFFFFF)
-                            )
-                            .clickable { onToggleLock() },
+                            .clickable(
+                                onClickLabel = if (overlayConfig.isTouchLocked) "Kilidi Aç" else "Konumu Kilitle"
+                            ) { onToggleLock() },
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = if (overlayConfig.isTouchLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                            contentDescription = if (overlayConfig.isTouchLocked) "Kilidi Aç" else "Konumu Kilitle",
-                            tint = if (overlayConfig.isTouchLocked) Color(0xFFFBBF24) else Color.White,
-                            modifier = Modifier.size(15.dp)
-                        )
-                    }
-
-                    if (!overlayConfig.isTouchLocked) {
-                        Spacer(modifier = Modifier.width(6.dp))
-
                         Box(
                             modifier = Modifier
                                 .size(30.dp)
                                 .clip(CircleShape)
-                                .background(Color(0x33FFFFFF))
-                                .clickable { onClose() },
+                                .background(
+                                    if (overlayConfig.isTouchLocked) Color(0x44FBBF24) else Color(0x33FFFFFF)
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Kapat",
-                                tint = Color.White,
+                                imageVector = if (overlayConfig.isTouchLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                                contentDescription = if (overlayConfig.isTouchLocked) "Kilidi Aç" else "Konumu Kilitle",
+                                tint = if (overlayConfig.isTouchLocked) Color(0xFFFBBF24) else Color.White,
                                 modifier = Modifier.size(15.dp)
                             )
+                        }
+                    }
+
+                    if (!overlayConfig.isTouchLocked) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .clickable(onClickLabel = "Kapat") { onClose() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x33FFFFFF)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Kapat",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -611,7 +628,7 @@ private fun FloatingSubtitleOverlayContent(
                 }
 
                 if (!overlayConfig.isTouchLocked) {
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly,
@@ -619,94 +636,137 @@ private fun FloatingSubtitleOverlayContent(
                     ) {
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color(0x22FFFFFF))
-                                .clickable {
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable(onClickLabel = "Yazıyı küçült") {
                                     MediaStateBus.updateOverlayConfig(
                                         overlayConfig.copy(
                                             fontSizeSp = (overlayConfig.fontSizeSp - 1f).coerceIn(12f, 24f)
                                         )
                                     )
-                                }
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                                },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = "A-",
-                                color = Color(0xFFCBD5E1),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0x22FFFFFF))
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "A-",
+                                    color = Color(0xFFCBD5E1),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
 
                         Box(
                             modifier = Modifier
-                                .size(34.dp)
+                                .size(44.dp)
                                 .clip(CircleShape)
-                                .background(Color(0x22FFFFFF))
-                                .clickable { MediaStateBus.onSkipPrevious?.invoke() },
+                                .clickable(onClickLabel = "Önceki") {
+                                    MediaStateBus.onSkipPrevious?.invoke()
+                                },
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.SkipPrevious,
-                                contentDescription = "Önceki",
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x22FFFFFF)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.SkipPrevious,
+                                    contentDescription = "Önceki",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
 
                         Box(
                             modifier = Modifier
-                                .size(38.dp)
+                                .size(44.dp)
                                 .clip(CircleShape)
-                                .background(Color(0x4438BDF8))
-                                .clickable { MediaStateBus.onPlayPauseToggle?.invoke() },
+                                .clickable(
+                                    onClickLabel = if (trackState.isPlaying) "Duraklat" else "Oynat"
+                                ) {
+                                    MediaStateBus.onPlayPauseToggle?.invoke()
+                                },
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = if (trackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (trackState.isPlaying) "Duraklat" else "Oynat",
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp)
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x4438BDF8)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (trackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (trackState.isPlaying) "Duraklat" else "Oynat",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
 
                         Box(
                             modifier = Modifier
-                                .size(34.dp)
+                                .size(44.dp)
                                 .clip(CircleShape)
-                                .background(Color(0x22FFFFFF))
-                                .clickable { MediaStateBus.onSkipNext?.invoke() },
+                                .clickable(onClickLabel = "Sonraki") {
+                                    MediaStateBus.onSkipNext?.invoke()
+                                },
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.SkipNext,
-                                contentDescription = "Sonraki",
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x22FFFFFF)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.SkipNext,
+                                    contentDescription = "Sonraki",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
 
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color(0x22FFFFFF))
-                                .clickable {
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable(onClickLabel = "Yazıyı büyüt") {
                                     MediaStateBus.updateOverlayConfig(
                                         overlayConfig.copy(
                                             fontSizeSp = (overlayConfig.fontSizeSp + 1f).coerceIn(12f, 24f)
                                         )
                                     )
-                                }
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                                },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = "A+",
-                                color = Color(0xFFCBD5E1),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0x22FFFFFF))
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "A+",
+                                    color = Color(0xFFCBD5E1),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
                     }
                 }

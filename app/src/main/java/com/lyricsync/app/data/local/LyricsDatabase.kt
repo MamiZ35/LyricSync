@@ -65,7 +65,7 @@ interface LyricsDao {
 
     @Query(
         "SELECT * FROM cached_lyrics " +
-            "WHERE artistName = :artistName AND trackName = :trackName AND targetLang = :targetLang " +
+            "WHERE artistName = :artistName COLLATE NOCASE AND trackName = :trackName COLLATE NOCASE AND targetLang = :targetLang " +
             "ORDER BY updatedAt DESC LIMIT 1"
     )
     suspend fun getLatestByTrackAndLang(
@@ -80,7 +80,10 @@ interface LyricsDao {
     @Query("UPDATE cached_lyrics SET isFavorite = :isFavorite WHERE cacheKey = :cacheKey")
     suspend fun setFavorite(cacheKey: String, isFavorite: Boolean)
 
-    @Query("UPDATE cached_lyrics SET syncOffsetMs = :offsetMs WHERE artistName = :artistName AND trackName = :trackName")
+    @Query(
+        "UPDATE cached_lyrics SET syncOffsetMs = :offsetMs " +
+            "WHERE artistName = :artistName COLLATE NOCASE AND trackName = :trackName COLLATE NOCASE"
+    )
     suspend fun updateSyncOffsetForTrack(artistName: String, trackName: String, offsetMs: Long)
 
     @Query(

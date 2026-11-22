@@ -32,6 +32,9 @@ object MediaStateBus {
     private val _trackState = MutableStateFlow(MediaTrackState())
     val trackState: StateFlow<MediaTrackState> = _trackState.asStateFlow()
 
+    private val _playbackPositionMs = MutableStateFlow(0L)
+    val playbackPositionMs: StateFlow<Long> = _playbackPositionMs.asStateFlow()
+
     private val _targetLanguage = MutableStateFlow(defaultTargetLang)
     val targetLanguage: StateFlow<String> = _targetLanguage.asStateFlow()
 
@@ -106,29 +109,35 @@ object MediaStateBus {
             _loopRange.value = null
         }
         _trackState.value = newState
+        _playbackPositionMs.value = newState.positionMs
         recalculateActiveLine(newState.positionMs)
     }
 
     fun updatePosition(positionMs: Long, isPlaying: Boolean) {
-        // Always update active line at 100ms precision while throttling full trackState UI emissions
+        // Always update active line at 100ms precision while throttling full UI position emissions
         val previousIndex = _activeLineIndex.value
         recalculateActiveLine(positionMs)
         val indexChanged = _activeLineIndex.value != previousIndex
-        val current = _trackState.value
-        val secondChanged = (positionMs / 1000L) != (current.positionMs / 1000L)
+        val lastEmittedPos = _playbackPositionMs.value
+        val secondChanged = (positionMs / 1000L) != (lastEmittedPos / 1000L)
         if (indexChanged ||
-            current.isPlaying != isPlaying ||
             secondChanged ||
-            positionMs < current.positionMs ||
-            abs(positionMs - current.positionMs) >= 900L
+            positionMs < lastEmittedPos ||
+            abs(positionMs - lastEmittedPos) >= 900L
         ) {
-            _trackState.value = current.copy(positionMs = positionMs, isPlaying = isPlaying)
+            _playbackPositionMs.value = positionMs
+        }
+        val current = _trackState.value
+        if (current.isPlaying != isPlaying) {
+            _trackState.value = current.copy(isPlaying = isPlaying)
         }
     }
 
     fun clearTrackIfSessionEnded() {
         if (!_trackState.value.isManualOverride) {
             _trackState.value = MediaTrackState()
+            _playbackPositionMs.value = 0L
+            _loopRange.value = null
             _lyricsState.value = LyricsState(targetLang = _targetLanguage.value)
             _activeLineIndex.value = -1
         }
@@ -136,7 +145,7 @@ object MediaStateBus {
 
     fun updateLyricsState(newState: LyricsState) {
         _lyricsState.value = newState
-        recalculateActiveLine(_trackState.value.positionMs)
+        recalculateActiveLine(_playbackPositionMs.value)
     }
 
     fun setTargetLanguage(langCode: String) {
@@ -183,9 +192,17 @@ object MediaStateBus {
         _loopRange.value = range
     }
 
-    fun updateOverlayConfig(config: OverlayConfig) {
+    fun previewOverlayConfig(config: OverlayConfig) {
+        _overlayConfig.value = config
+    }
+
+    fun commitOverlayConfig(config: OverlayConfig) {
         _overlayConfig.value = config
         prefs?.saveOverlayConfig(config)
+    }
+
+    fun updateOverlayConfig(config: OverlayConfig) {
+        commitOverlayConfig(config)
     }
 
     fun updateOverlayPosition(x: Int, y: Int) {
@@ -210,7 +227,27 @@ object MediaStateBus {
     fun setSyncOffsetMs(offsetMs: Long) {
         val clamped = offsetMs.coerceIn(-15_000L, 15_000L)
         _lyricsState.value = _lyricsState.value.copy(syncOffsetMs = clamped)
-        recalculateActiveLine(_trackState.value.positionMs)
+        recalculateActiveLine(_playbackPositionMs.value)
+    }
+
+    internal fun resetForTesting() {
+        prefs = null
+        _trackState.value = MediaTrackState()
+        _playbackPositionMs.value = 0L
+        _targetLanguage.value = defaultTargetLang
+        _themeMode.value = ThemeMode.DARK
+        _displayMode.value = LyricDisplayMode.DUAL
+        _translationEngine.value = TranslationEngine.CLOUD_CONTEXT
+        _wifiOnlyDownload.value = false
+        _keepScreenOn.value = false
+        _autoHideOverlayOnPause.value = true
+        _autoLaunchSpotify.value = false
+        _loopRange.value = null
+        _overlayConfig.value = OverlayConfig()
+        _lyricsState.value = LyricsState(targetLang = defaultTargetLang)
+        _activeLineIndex.value = -1
+        _isOverlayActive.value = false
+        _isAppInForeground.value = false
     }
 
     private fun recalculateActiveLine(positionMs: Long) {
