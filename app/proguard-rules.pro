@@ -1,3 +1,4 @@
+-dontobfuscate
 -keepattributes Signature, InnerClasses, EnclosingMethod, *Annotation*, RuntimeVisibleAnnotations, RuntimeVisibleParameterAnnotations
 
 # Retrofit & OkHttp
@@ -11,18 +12,16 @@
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
 
-# App Models, Remote DTOs, Room Entities/DAOs, Services, UI & ViewModels
--keep class com.lyricsync.app.MainActivity { *; }
--keep class com.lyricsync.app.ui.MainViewModel { *; }
--keep class com.lyricsync.app.data.remote.** { *; }
--keep class com.lyricsync.app.data.local.** { *; }
--keep class com.lyricsync.app.data.repository.** { *; }
--keep class com.lyricsync.app.domain.** { *; }
--keep class com.lyricsync.app.service.** { *; }
+# App Classes (MainActivity, ViewModels, Models, Remote DTOs, Room Entities/DAOs, Services)
+-keep class com.lyricsync.app.** { *; }
 
-# Lifecycle ViewModel reflection instantiation
--keep class androidx.lifecycle.ViewModel { *; }
--keep class androidx.lifecycle.AndroidViewModel { *; }
+# Compose reflection lookup for LocalLifecycleOwner
+-keep class androidx.compose.ui.platform.AndroidCompositionLocals_androidKt { *; }
+
+# Lifecycle, SavedState & Room reflection targets
+-keep class androidx.lifecycle.** { *; }
+-keep class androidx.savedstate.** { *; }
+-keep class androidx.room.** { *; }
 -keep public class * extends androidx.lifecycle.ViewModel {
     public <init>(...);
 }
@@ -31,10 +30,11 @@
 }
 
 # Gson & Kotlin metadata
--keep class com.google.gson.reflect.TypeToken { *; }
+-keep class com.google.gson.** { *; }
 -keep class * extends com.google.gson.reflect.TypeToken { *; }
 -keep class kotlin.Metadata { *; }
 
-# Google ML Kit
+# Firebase ComponentDiscovery & Google ML Kit
+-keep class com.google.firebase.** { *; }
 -keep class com.google.mlkit.** { *; }
 -keep class com.google.android.gms.** { *; }

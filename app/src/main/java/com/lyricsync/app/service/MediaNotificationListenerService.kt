@@ -10,12 +10,14 @@ import android.media.Rating
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
+import android.os.Build
 import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.lyricsync.app.data.repository.LyricsRepository
 import com.lyricsync.app.data.repository.MediaStateBus
 import com.lyricsync.app.domain.MediaTrackState
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,7 +34,8 @@ import kotlinx.coroutines.withContext
 
 class MediaNotificationListenerService : NotificationListenerService() {
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val exceptionHandler = CoroutineExceptionHandler { _, _ -> }
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main + exceptionHandler)
     private var mediaSessionManager: MediaSessionManager? = null
     private var activeController: MediaController? = null
     private var positionTickerJob: Job? = null
@@ -307,19 +310,23 @@ class MediaNotificationListenerService : NotificationListenerService() {
         )
         MediaStateBus.updateTrackState(trackState)
 
-        if (cachedArtTrackId != controllerTrackId || cachedAlbumArt == null) {
+        if (cachedArtTrackId != controllerTrackId ||
+            (cachedAlbumArt == null && artProcessingJob?.isActive != true)
+        ) {
+            cachedArtTrackId = controllerTrackId
             val rawArt = metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
                 ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_ART)
             artProcessingJob?.cancel()
             if (rawArt != null) {
                 artProcessingJob = serviceScope.launch {
                     val processed = withContext(Dispatchers.Default) {
-                        val scaled = downscaleBitmap(rawArt, 256)
-                        val accent = extractDominantColor(scaled)
-                        Pair(scaled, accent)
+                        runCatching {
+                            val scaled = downscaleBitmap(rawArt, 256)
+                            val accent = extractDominantColor(scaled)
+                            Pair(scaled, accent)
+                        }.getOrNull()
                     }
-                    if (lastSyncedControllerTrackId == controllerTrackId) {
-                        cachedArtTrackId = controllerTrackId
+                    if (processed != null && lastSyncedControllerTrackId == controllerTrackId) {
                         cachedAlbumArt = processed.first
                         cachedAccentColor = processed.second
                         val current = MediaStateBus.trackState.value
@@ -335,7 +342,6 @@ class MediaNotificationListenerService : NotificationListenerService() {
                     }
                 }
             } else {
-                cachedArtTrackId = controllerTrackId
                 cachedAlbumArt = null
                 cachedAccentColor = null
             }
@@ -412,19 +418,30 @@ class MediaNotificationListenerService : NotificationListenerService() {
         MediaStateBus.clearTrackIfSessionEnded()
     }
 
+    private fun toSoftwareBitmapIfHardware(source: Bitmap): Bitmap {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            source.config == Bitmap.Config.HARDWARE
+        ) {
+            return source.copy(Bitmap.Config.ARGB_8888, false) ?: source
+        }
+        return source
+    }
+
     private fun downscaleBitmap(source: Bitmap, maxDim: Int): Bitmap {
-        val width = source.width
-        val height = source.height
-        if (width <= maxDim && height <= maxDim) return source
+        val safeSource = toSoftwareBitmapIfHardware(source)
+        val width = safeSource.width
+        val height = safeSource.height
+        if (width <= maxDim && height <= maxDim) return safeSource
         val scale = maxDim.toFloat() / maxOf(width, height).toFloat()
         val targetW = (width * scale).toInt().coerceAtLeast(1)
         val targetH = (height * scale).toInt().coerceAtLeast(1)
-        return Bitmap.createScaledBitmap(source, targetW, targetH, true)
+        return Bitmap.createScaledBitmap(safeSource, targetW, targetH, true)
     }
 
     private fun extractDominantColor(bitmap: Bitmap): Int? {
-        val w = bitmap.width
-        val h = bitmap.height
+        val safeBitmap = toSoftwareBitmapIfHardware(bitmap)
+        val w = safeBitmap.width
+        val h = safeBitmap.height
         if (w <= 0 || h <= 0) return null
 
         val stepX = (w / 10).coerceAtLeast(1)
@@ -436,7 +453,7 @@ class MediaNotificationListenerService : NotificationListenerService() {
 
         for (y in 0 until h step stepY) {
             for (x in 0 until w step stepX) {
-                val pixel = bitmap.getPixel(x, y)
+                val pixel = safeBitmap.getPixel(x, y)
                 val r = Color.red(pixel)
                 val g = Color.green(pixel)
                 val b = Color.blue(pixel)

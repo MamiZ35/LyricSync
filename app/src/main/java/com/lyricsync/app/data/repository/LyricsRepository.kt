@@ -22,6 +22,7 @@ import com.lyricsync.app.domain.LyricsState
 import com.lyricsync.app.domain.MediaTrackState
 import com.lyricsync.app.domain.TranslationEngine
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -39,7 +40,8 @@ class LyricsRepository private constructor(context: Context) {
     private val api = LrcLibApi.instance
     private val gson = Gson()
     private val lineListType = TypeToken.getParameterized(List::class.java, LyricLine::class.java).type
-    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val exceptionHandler = CoroutineExceptionHandler { _, _ -> }
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + exceptionHandler)
     private val jobLock = Any()
     private var activeLoadJob: Job? = null
 

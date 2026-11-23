@@ -21,6 +21,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -65,172 +66,174 @@ class MainActivity : ComponentActivity() {
         MediaStateBus.init(applicationContext)
 
         setContent {
-            val viewModel: MainViewModel = viewModel()
-            val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
-            val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
-            val autoLaunchSpotify by viewModel.autoLaunchSpotify.collectAsStateWithLifecycle()
-            val trackState by viewModel.trackState.collectAsStateWithLifecycle()
+            CompositionLocalProvider(LocalLifecycleOwner provides this@MainActivity) {
+                val viewModel: MainViewModel = viewModel(factory = MainViewModel.factory(application))
+                val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+                val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
+                val autoLaunchSpotify by viewModel.autoLaunchSpotify.collectAsStateWithLifecycle()
+                val trackState by viewModel.trackState.collectAsStateWithLifecycle()
 
-            var hasNotificationAccess by remember {
-                mutableStateOf(isNotificationServiceEnabled(this))
-            }
-            var hasOverlayPermission by remember {
-                mutableStateOf(Settings.canDrawOverlays(this))
-            }
-            var onboardingCompleted by rememberSaveable {
-                mutableStateOf(hasNotificationAccess)
-            }
-            var hasAttemptedNotificationAccess by rememberSaveable {
-                mutableStateOf(false)
-            }
-            var isSessionInstalling by remember {
-                mutableStateOf(false)
-            }
+                var hasNotificationAccess by remember {
+                    mutableStateOf(isNotificationServiceEnabled(this))
+                }
+                var hasOverlayPermission by remember {
+                    mutableStateOf(Settings.canDrawOverlays(this))
+                }
+                var onboardingCompleted by rememberSaveable {
+                    mutableStateOf(hasNotificationAccess)
+                }
+                var hasAttemptedNotificationAccess by rememberSaveable {
+                    mutableStateOf(false)
+                }
+                var isSessionInstalling by remember {
+                    mutableStateOf(false)
+                }
 
-            // Request POST_NOTIFICATIONS runtime permission on Android 13+ for foreground overlay notification
-            val notificationPermissionLauncher = rememberLauncherForActivityResult(
-                contract = ActivityResultContracts.RequestPermission(),
-                onResult = {}
-            )
-            LaunchedEffect(Unit) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    val granted = ContextCompat.checkSelfPermission(
-                        this@MainActivity,
-                        Manifest.permission.POST_NOTIFICATIONS
-                    ) == PackageManager.PERMISSION_GRANTED
-                    if (!granted) {
-                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                // Request POST_NOTIFICATIONS runtime permission on Android 13+ for foreground overlay notification
+                val notificationPermissionLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.RequestPermission(),
+                    onResult = {}
+                )
+                LaunchedEffect(Unit) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        val granted = ContextCompat.checkSelfPermission(
+                            this@MainActivity,
+                            Manifest.permission.POST_NOTIFICATIONS
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (!granted) {
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
                     }
                 }
-            }
 
-            val lifecycleOwner = LocalLifecycleOwner.current
-            DisposableEffect(lifecycleOwner) {
-                val observer = LifecycleEventObserver { _, event ->
-                    when (event) {
-                        Lifecycle.Event.ON_RESUME -> {
-                            MediaStateBus.setAppInForeground(true)
-                            val notifGranted = isNotificationServiceEnabled(this@MainActivity)
-                            val overlayGranted = Settings.canDrawOverlays(this@MainActivity)
-                            hasNotificationAccess = notifGranted
-                            hasOverlayPermission = overlayGranted
-                            if (notifGranted) {
-                                runCatching {
-                                    NotificationListenerService.requestRebind(
-                                        ComponentName(
-                                            this@MainActivity,
-                                            MediaNotificationListenerService::class.java
+                val lifecycleOwner = LocalLifecycleOwner.current
+                DisposableEffect(lifecycleOwner) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        when (event) {
+                            Lifecycle.Event.ON_RESUME -> {
+                                MediaStateBus.setAppInForeground(true)
+                                val notifGranted = isNotificationServiceEnabled(this@MainActivity)
+                                val overlayGranted = Settings.canDrawOverlays(this@MainActivity)
+                                hasNotificationAccess = notifGranted
+                                hasOverlayPermission = overlayGranted
+                                if (notifGranted) {
+                                    runCatching {
+                                        NotificationListenerService.requestRebind(
+                                            ComponentName(
+                                                this@MainActivity,
+                                                MediaNotificationListenerService::class.java
+                                            )
                                         )
-                                    )
+                                    }
                                 }
-                            }
-                            if (notifGranted && overlayGranted) {
-                                onboardingCompleted = true
-                            }
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                                packageManager.canRequestPackageInstalls()
-                            ) {
-                                pendingInstallApkFile?.let { file ->
-                                    pendingInstallApkFile = null
-                                    installDownloadedApk(file) { installing ->
-                                        isSessionInstalling = installing
+                                if (notifGranted && overlayGranted) {
+                                    onboardingCompleted = true
+                                }
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                                    packageManager.canRequestPackageInstalls()
+                                ) {
+                                    pendingInstallApkFile?.let { file ->
+                                        pendingInstallApkFile = null
+                                        installDownloadedApk(file) { installing ->
+                                            isSessionInstalling = installing
+                                        }
                                     }
                                 }
                             }
+                            Lifecycle.Event.ON_PAUSE -> {
+                                MediaStateBus.setAppInForeground(false)
+                            }
+                            else -> Unit
                         }
-                        Lifecycle.Event.ON_PAUSE -> {
-                            MediaStateBus.setAppInForeground(false)
-                        }
-                        else -> Unit
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose {
+                        MediaStateBus.setAppInForeground(false)
+                        lifecycleOwner.lifecycle.removeObserver(observer)
                     }
                 }
-                lifecycleOwner.lifecycle.addObserver(observer)
-                onDispose {
-                    MediaStateBus.setAppInForeground(false)
-                    lifecycleOwner.lifecycle.removeObserver(observer)
-                }
-            }
 
-            val coroutineScope = rememberCoroutineScope()
-            var autoLaunchAttempted by rememberSaveable { mutableStateOf(false) }
+                val coroutineScope = rememberCoroutineScope()
+                var autoLaunchAttempted by rememberSaveable { mutableStateOf(false) }
 
-            LaunchedEffect(onboardingCompleted) {
-                if (onboardingCompleted && !autoLaunchAttempted) {
-                    autoLaunchAttempted = true
-                    if (autoLaunchSpotify && !trackState.hasActiveTrack) {
-                        wakeOrLaunchSpotify(returnToLyricSync = true)
+                LaunchedEffect(onboardingCompleted) {
+                    if (onboardingCompleted && !autoLaunchAttempted) {
+                        autoLaunchAttempted = true
+                        if (autoLaunchSpotify && !trackState.hasActiveTrack) {
+                            wakeOrLaunchSpotify(returnToLyricSync = true)
+                        }
                     }
                 }
-            }
 
-            LaunchedEffect(keepScreenOn) {
-                if (keepScreenOn) {
-                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                } else {
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                LaunchedEffect(keepScreenOn) {
+                    if (keepScreenOn) {
+                        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    } else {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
                 }
-            }
 
-            LyricSyncTheme(themeMode = themeMode) {
-                if (!onboardingCompleted) {
-                    PermissionOnboardingScreen(
-                        hasNotificationAccess = hasNotificationAccess,
-                        hasOverlayPermission = hasOverlayPermission,
-                        hasAttemptedNotificationAccess = hasAttemptedNotificationAccess,
-                        isSessionInstalling = isSessionInstalling,
-                        onOpenAppDetails = { openAppDetailsSettings() },
-                        onRequestNotificationAccess = {
-                            hasAttemptedNotificationAccess = true
-                            openNotificationListenerSettings()
-                        },
-                        onReinstallViaSession = {
-                            reinstallSelfViaSession { installing ->
-                                isSessionInstalling = installing
-                            }
-                        },
-                        onRequestOverlayPermission = { openOverlaySettings() },
-                        onContinueToApp = { onboardingCompleted = true }
-                    )
-                } else {
-                    MainScreen(
-                        viewModel = viewModel,
-                        hasNotificationAccess = hasNotificationAccess,
-                        onOpenPermissions = { onboardingCompleted = false },
-                        onToggleOverlay = {
-                            if (!Settings.canDrawOverlays(this)) {
-                                openOverlaySettings()
-                            } else if (viewModel.isOverlayActive.value) {
-                                FloatingOverlayService.stop(this)
-                            } else {
-                                FloatingOverlayService.start(this)
-                            }
-                        },
-                        onLaunchSpotify = { wakeOrLaunchSpotify(returnToLyricSync = false) },
-                        onCopyLine = ::copyLyricLine,
-                        onShareLine = { line ->
-                            shareLyricLine(line, trackState.trackName, trackState.artistName)
-                        },
-                        onShareImageCard = { line ->
-                            coroutineScope.launch {
-                                LyricCardGenerator.generateAndShareCard(
-                                    context = this@MainActivity,
-                                    track = trackState,
-                                    line = line
-                                )
-                            }
-                        },
-                        onFavoriteFeedback = {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "LyricSync favorilerine eklendi",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        },
-                        onInstallApk = { file ->
-                            installDownloadedApk(file)
-                        },
-                        onOpenDownloadUrl = ::openDownloadUrl
-                    )
+                LyricSyncTheme(themeMode = themeMode) {
+                    if (!onboardingCompleted) {
+                        PermissionOnboardingScreen(
+                            hasNotificationAccess = hasNotificationAccess,
+                            hasOverlayPermission = hasOverlayPermission,
+                            hasAttemptedNotificationAccess = hasAttemptedNotificationAccess,
+                            isSessionInstalling = isSessionInstalling,
+                            onOpenAppDetails = { openAppDetailsSettings() },
+                            onRequestNotificationAccess = {
+                                hasAttemptedNotificationAccess = true
+                                openNotificationListenerSettings()
+                            },
+                            onReinstallViaSession = {
+                                reinstallSelfViaSession { installing ->
+                                    isSessionInstalling = installing
+                                }
+                            },
+                            onRequestOverlayPermission = { openOverlaySettings() },
+                            onContinueToApp = { onboardingCompleted = true }
+                        )
+                    } else {
+                        MainScreen(
+                            viewModel = viewModel,
+                            hasNotificationAccess = hasNotificationAccess,
+                            onOpenPermissions = { onboardingCompleted = false },
+                            onToggleOverlay = {
+                                if (!Settings.canDrawOverlays(this)) {
+                                    openOverlaySettings()
+                                } else if (viewModel.isOverlayActive.value) {
+                                    FloatingOverlayService.stop(this)
+                                } else {
+                                    FloatingOverlayService.start(this)
+                                }
+                            },
+                            onLaunchSpotify = { wakeOrLaunchSpotify(returnToLyricSync = false) },
+                            onCopyLine = ::copyLyricLine,
+                            onShareLine = { line ->
+                                shareLyricLine(line, trackState.trackName, trackState.artistName)
+                            },
+                            onShareImageCard = { line ->
+                                coroutineScope.launch {
+                                    LyricCardGenerator.generateAndShareCard(
+                                        context = this@MainActivity,
+                                        track = trackState,
+                                        line = line
+                                    )
+                                }
+                            },
+                            onFavoriteFeedback = {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "LyricSync favorilerine eklendi",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            },
+                            onInstallApk = { file ->
+                                installDownloadedApk(file)
+                            },
+                            onOpenDownloadUrl = ::openDownloadUrl
+                        )
+                    }
                 }
             }
         }
