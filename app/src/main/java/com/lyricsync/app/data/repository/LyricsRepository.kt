@@ -38,7 +38,7 @@ class LyricsRepository private constructor(context: Context) {
     private val dao = LyricsDatabase.getInstance(context.applicationContext).lyricsDao()
     private val api = LrcLibApi.instance
     private val gson = Gson()
-    private val lineListType = object : TypeToken<List<LyricLine>>() {}.type
+    private val lineListType = TypeToken.getParameterized(List::class.java, LyricLine::class.java).type
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val jobLock = Any()
     private var activeLoadJob: Job? = null

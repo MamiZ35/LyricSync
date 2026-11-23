@@ -1,5 +1,7 @@
 package com.lyricsync.app.domain
 
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import com.lyricsync.app.data.remote.CloudTranslator
 import com.lyricsync.app.data.remote.UpdateChecker
 import org.junit.Assert.assertEquals
@@ -163,5 +165,18 @@ class LrcParserTest {
 
         val recovered = CloudTranslator.recoverNumberedTranslations(raw, expectedCount = 3)
         assertEquals(listOf("Merhaba dünya", "Nasılsın bugün?", "Görüşürüz"), recovered)
+    }
+
+    @Test
+    fun `gson round-trips LyricLine list using TypeToken getParameterized`() {
+        val original = listOf(
+            LyricLine(timeMs = 1_200L, originalText = "Hello", translatedText = "Merhaba"),
+            LyricLine(timeMs = 4_500L, originalText = "World", translatedText = "Dünya")
+        )
+        val gson = Gson()
+        val listType = TypeToken.getParameterized(List::class.java, LyricLine::class.java).type
+        val json = gson.toJson(original, listType)
+        val decoded: List<LyricLine> = gson.fromJson(json, listType)
+        assertEquals(original, decoded)
     }
 }
